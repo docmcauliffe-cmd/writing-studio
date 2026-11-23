@@ -38,7 +38,7 @@ jobs:
           cd src-tauri && cargo test
 
       # Every push: build the app and attach it to the run (Actions tab > run > Artifacts).
-      - name: Build (universal: Apple silicon and Intel)
+      - name: Build for Apple silicon and Intel Macs
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         run: npx tauri build --target universal-apple-darwin
 
