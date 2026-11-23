@@ -63,4 +63,4 @@ npm run tauri dev                # run the app (Mac)
 npm run dev                      # then open http://localhost:1420/dev/mock.html to try the interface in a browser with sample data
 ```
 
-Pushing to `main` builds the app on GitHub (Actions › run › Artifacts). Pushing a tag such as `v0.1.1` publishes a release with the installer.
+Pull requests build the app on GitHub (Actions › run › Artifacts). Every push to `main` publishes a release named after the version in `src-tauri/tauri.conf.json`; bump it (and `package.json`, `Cargo.toml`) for each new release.
