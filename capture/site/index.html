@@ -119,7 +119,21 @@ async function pair(raw) {
   keep(K.conn, { url, key: res.key });
 }
 
-function renderConnect() {
+// iPhone keeps a home-screen app's storage apart from Safari's, so connect inside the home-screen app.
+const inSafariOnIos = () => /iPhone|iPad|iPod/.test(navigator.userAgent) && !navigator.standalone && !matchMedia('(display-mode: standalone)').matches;
+
+function renderAddFirst() {
+  $('#app').innerHTML = `
+    <div class="connect">
+      <h1>Add Capture to your Home Screen</h1>
+      <p>Tap the Share button, then <b>Add to Home Screen</b>. Open Capture from its new icon and connect it there. A connection made here in Safari doesn’t carry over to the icon.</p>
+      <button class="link" id="anyway" style="align-self:flex-start">Use it in Safari instead</button>
+    </div>`;
+  $('#anyway').onclick = () => renderConnect(true);
+}
+
+function renderConnect(here) {
+  if (!here && inSafariOnIos()) return renderAddFirst();
   $('#app').innerHTML = `
     <div class="connect">
       <h1>Connect to your Inbox</h1>
