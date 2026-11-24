@@ -190,7 +190,7 @@ function welcome() {
   app.replaceChildren(h('div', { class: 'welcome' }, h('div', { class: 'card' },
     h('h1', {}, 'Welcome to Writing Studio'),
     h('p', {}, 'Choose the Writing Studio folder in your Google Drive. Everything you write is kept there as plain Markdown files, so it syncs to your other Mac and is backed up by Drive.'),
-    h('p', {}, 'In Finder it is under Google Drive › My Drive › 02 I-O Practice › Writing Studio.'),
+    h('p', {}, 'In Finder, look under Google Drive › My Drive for the folder named Writing Studio.'),
     h('div', {}, h('button', { class: 'btn primary', onclick: chooseFolder }, 'Choose folder…')),
   )));
 }

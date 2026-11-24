@@ -1,5 +1,5 @@
 // A stand-in for the Tauri backend so the interface can be tried in an ordinary
-try { if (!localStorage.getItem("ws-root")) localStorage.setItem("ws-root", JSON.stringify("/Users/nick/Google Drive/My Drive/02 I-O Practice/Writing Studio")); } catch {}
+try { if (!localStorage.getItem("ws-root")) localStorage.setItem("ws-root", JSON.stringify("/Users/writer/Google Drive/My Drive/Writing Studio")); } catch {}
 // browser (npm run dev, then open /dev/mock.html). Keeps a small sample book in memory.
 const files = new Map(Object.entries({
   'The Bench/_book.txt': 'Title: The Bench\nGoal: 60000\n',
@@ -35,7 +35,7 @@ const moveTree = (from, to) => { for (const k of [...files.keys()]) if (k === fr
 
 const cmds = {
   device_name: () => 'iMac',
-  local_backup_folder: () => '/Users/nick/Library/Application Support/Writing Studio/Backups',
+  local_backup_folder: () => '/Users/writer/Library/Application Support/Writing Studio/Backups',
   folder_exists: () => true,
   watch_start: () => null,
   settings_read: () => files.get('Writing Studio - App Data/settings.json') || '{}',

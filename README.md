@@ -4,7 +4,7 @@ A calm, distraction-free Mac app for writing books in plain Markdown, modeled on
 
 ## Where your writing lives
 
-Everything is ordinary files in **Google Drive › My Drive › 02 I-O Practice › Writing Studio**:
+Everything is ordinary files in a **Writing Studio** folder inside Google Drive (any location you choose on first launch):
 
 ```
 Writing Studio/
