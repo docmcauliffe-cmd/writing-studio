@@ -39,7 +39,11 @@ button { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--hl); outline-offset: 2px; }
 
 #app { height: 100%; display: grid; grid-template-columns: var(--sidebar) minmax(0, 1fr); transition: grid-template-columns .25s; }
+body.with-ref #app { grid-template-columns: var(--sidebar) minmax(0, 1fr) 340px; }
 body.focus-mode #app, body.no-sidebar #app { grid-template-columns: 0 minmax(0, 1fr); }
+body.with-ref.no-sidebar #app { grid-template-columns: 0 minmax(0, 1fr) 340px; }
+body.focus-mode.with-ref #app { grid-template-columns: 0 minmax(0, 1fr) 0; }
+body.focus-mode .ref-panel { visibility: hidden; }
 body.focus-mode .side, body.no-sidebar .side { visibility: hidden; }
 body.focus-mode .topbar, body.focus-mode .foot { opacity: 0; transition: opacity .3s; }
 body.focus-mode .topbar:hover, body.focus-mode .foot:hover { opacity: 1; }
@@ -79,6 +83,24 @@ ol.tree { list-style: none; margin: 0; padding: 0; }
 .side-foot { border-top: 1px solid var(--rule); padding: 8px 10px; display: flex; gap: 4px; flex-wrap: wrap; }
 .side-foot button { border: 0; background: none; cursor: pointer; color: var(--dim); padding: 5px 8px; border-radius: 6px; font-size: 12px; }
 .side-foot button:hover { background: var(--sel); color: var(--text); }
+
+/* ---------- reference notes ---------- */
+.ref-label { margin-top: 22px; }
+.ref-list { padding-left: 0; }
+.ref-panel { display: none; background: var(--side); border-left: 1px solid var(--rule); min-width: 0; overflow: hidden; flex-direction: column; }
+body.with-ref .ref-panel { display: flex; }
+.ref-head { height: 38px; flex: none; display: flex; align-items: center; gap: 4px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--rule); -webkit-app-region: drag; }
+.ref-head > * { -webkit-app-region: no-drag; }
+.ref-head select { flex: 1; min-width: 0; font: 600 13px var(--ui); color: var(--text); background: transparent; border: 0; padding: 4px; border-radius: 6px; }
+.ref-body { overflow: auto; padding: 16px 18px 40px; font-size: 13.5px; line-height: 1.55; color: var(--text); user-select: text; }
+.ref-h { font-weight: 600; margin: 14px 0 6px; }
+.ref-h1 { font-size: 16px; margin-top: 0; }
+.ref-h2 { font-size: 14.5px; }
+.ref-h3 { font-size: 13.5px; color: var(--dim); text-transform: uppercase; letter-spacing: .05em; font-size: 11.5px; }
+.ref-li { display: flex; gap: 8px; margin: 3px 0; }
+.ref-bullet { color: var(--dim); flex: none; min-width: 10px; }
+.ref-gap { height: 8px; }
+.ref-p { margin: 0 0 2px; }
 
 /* ---------- editor ---------- */
 .main { display: flex; flex-direction: column; min-width: 0; position: relative; }

@@ -28,6 +28,7 @@ import { createEditor } from './editor.js';
 import { lineDiff, wordCount, formatCount, stamp, snapshotDue, otherDeviceOn, dropIndex, minutesAgo } from './logic.js';
 
 const INBOX = 'Writing Studio - Inbox';
+const REFERENCE = '_Reference Notes'; // per book; not part of the manuscript
 const FONTS = {
   plex: { name: 'Plex Sans', css: '"IBM Plex Sans", -apple-system, system-ui, sans-serif' },
   literata: { name: 'Literata', css: '"Literata", Georgia, serif' },
@@ -220,6 +221,8 @@ async function start() {
   if (last && findSection(last)) await openSection(last);
   else if (first) await openSection(first);
   else showEmptyMain();
+  const lastPanel = store.get('ws-panel');
+  if (lastPanel && findSection(lastPanel)) openPanel(lastPanel);
   try { await call('watch_start'); } catch (e) { toast(String(e)); }
 }
 
@@ -244,6 +247,7 @@ function shell() {
       h('div', { id: 'banner-slot' }),
       h('div', { class: 'editor-host', id: 'editor-host' }),
       h('div', { class: 'foot', id: 'foot' })),
+    h('aside', { class: 'ref-panel', id: 'ref-panel', 'aria-label': 'Reference note' }),
   );
   editor = createEditor($('#editor-host'), {
     onChange,
@@ -274,7 +278,9 @@ function findSection(rel) {
   if (!rel) return null;
   if (rel.startsWith(INBOX + '/')) return S.lib.inbox.find((s) => `${INBOX}/${s.file}` === rel) || null;
   const [b, c, f] = rel.split('/');
-  return S.lib.books.find((x) => x.name === b)?.chapters.find((x) => x.name === c)?.sections.find((x) => x.file === f) || null;
+  const bk = S.lib.books.find((x) => x.name === b);
+  if (c === REFERENCE) return bk?.notes.find((x) => x.file === f) || null;
+  return bk?.chapters.find((x) => x.name === c)?.sections.find((x) => x.file === f) || null;
 }
 
 async function refresh() {
@@ -340,8 +346,39 @@ function renderSidebar() {
     });
     tree.addEventListener('drop', (e) => { if (drag?.kind === 'chapter' && e.target === tree) { e.preventDefault(); dropChapter(null); } });
     kids.push(tree);
+    kids.push(...referenceSection(b));
   }
   side.replaceChildren(...kids);
+}
+
+// Reference notes: material to consult while writing. Saved, synced and backed up like
+// everything else, but left out of word counts, goals and export.
+function referenceSection(b) {
+  const nrel = `${b.name}/${REFERENCE}`;
+  const label = h('div', { class: 'label ref-label' }, h('span', {}, 'Reference'),
+    h('button', { title: 'New reference note', 'aria-label': 'New reference note', onclick: () => newNote() }, '+'));
+  label.addEventListener('dragover', (e) => { if (drag?.kind === 'section') { e.preventDefault(); clearDrop(); label.classList.add('drop-into'); } });
+  label.addEventListener('drop', (e) => { if (drag?.kind === 'section') { e.preventDefault(); dropSection(nrel, null); } });
+  const list = h('ol', { class: 'tree secs ref-list' }, b.notes.map((s) => sectionRow(`${nrel}/${s.file}`, s, false)));
+  if (!b.notes.length) {
+    const empty = h('div', { class: 'row', onclick: () => newNote() }, h('span', { class: 'name', style: 'color:var(--dim)' }, '+ Add a note (prompts, research, characters)'));
+    empty.addEventListener('dragover', (e) => { if (drag?.kind === 'section') { e.preventDefault(); clearDrop(); empty.classList.add('drop-into'); } });
+    empty.addEventListener('drop', (e) => { if (drag?.kind === 'section') { e.preventDefault(); dropSection(nrel, null); } });
+    list.append(h('li', {}, empty));
+  }
+  return [label, list];
+}
+
+async function newNote() {
+  const b = book();
+  if (!b) return;
+  const title = await ask('New reference note', { label: 'Note title', okText: 'Add note', note: 'Reference notes sit beside your chapters for you to consult. They aren’t counted or exported.' });
+  if (!title) return;
+  try {
+    const file = await call('section_create', { chapter: `${b.name}/${REFERENCE}`, title, after: b.notes.at(-1)?.file || null });
+    await refresh();
+    await openSection(`${b.name}/${REFERENCE}/${file}`);
+  } catch (e) { toast(String(e)); }
 }
 
 function chapterItem(b, c) {
@@ -422,10 +459,11 @@ async function dropSection(chapterRel, beforeFile) {
   const d = drag; endDrag();
   if (!d) return;
   const [bName, cName] = chapterRel.split('/');
-  const target = S.lib.books.find((x) => x.name === bName)?.chapters.find((x) => x.name === cName);
-  if (!target) return;
+  const bk = S.lib.books.find((x) => x.name === bName);
+  const list = cName === REFERENCE ? bk?.notes : bk?.chapters.find((x) => x.name === cName)?.sections;
+  if (!list) return;
   const sameChapter = d.rel.startsWith(chapterRel + '/');
-  const names = target.sections.map((s) => s.file);
+  const names = list.map((s) => s.file);
   const index = dropIndex(names, sameChapter ? d.file : null, beforeFile);
   await moveItem(d.rel, chapterRel, index);
 }
@@ -456,7 +494,7 @@ async function moveItem(fromRel, toDir, index) {
 function parseRel(rel) {
   const parts = rel.split('/');
   const file = parts.at(-1);
-  return { rel, book: parts[0], chapter: parts.length > 2 ? parts[1] : null, file, title: file.replace(/\.md$/i, ''), inbox: parts[0] === INBOX };
+  return { rel, book: parts[0], chapter: parts.length > 2 ? parts[1] : null, file, title: file.replace(/\.md$/i, ''), inbox: parts[0] === INBOX, note: parts[1] === REFERENCE };
 }
 
 function setCurrentRel(rel) {
@@ -553,7 +591,11 @@ async function trashItem(rel, label) {
 
 function sectionMenu(e, rel, s, inbox) {
   const items = [{ label: 'Rename', run: () => { const row = e.target.closest('.row'); inlineRename(row, rel, s.title); } }];
-  if (!inbox) {
+  const isNote = rel.split('/')[1] === REFERENCE;
+  if (isNote || inbox) items.push({ label: 'Open beside your writing', run: () => openPanel(rel) });
+  if (isNote) {
+    items.push({ label: 'New note', run: () => newNote() });
+  } else if (!inbox) {
     const [b, c, f] = rel.split('/');
     items.push({ label: 'New section below', run: () => newSection(`${b}/${c}`, f) });
   } else {
@@ -677,7 +719,7 @@ async function openSection(rel) {
 
 function updateChrome() {
   const c = S.current;
-  $('#crumb').textContent = !c ? '' : c.inbox ? `Inbox › ${c.title}` : `${book()?.title || c.book} › ${c.chapter} › ${c.title}`;
+  $('#crumb').textContent = !c ? '' : c.inbox ? `Inbox › ${c.title}` : `${book()?.title || c.book} › ${c.note ? 'Reference' : c.chapter} › ${c.title}`;
   renderBanner();
   renderFoot();
 }
@@ -693,12 +735,16 @@ function renderBanner(otherDevice) {
   }
   if (S.current?.inbox) {
     const b = book();
-    const sel = h('select', { id: 'file-into', 'aria-label': 'Chapter' }, ...(b?.chapters || []).map((c) => h('option', { value: `${b.name}/${c.name}` }, c.name)));
+    const sel = h('select', { id: 'file-into', 'aria-label': 'Chapter' },
+      ...(b?.chapters || []).map((c) => h('option', { value: `${b.name}/${c.name}` }, c.name)),
+      b ? h('option', { value: `${b.name}/${REFERENCE}` }, 'Reference notes') : null);
     kids.push(h('div', { class: 'banner' },
       h('span', {}, 'Captured on your iPhone. File it into'), sel,
       h('button', { onclick: async () => {
         if (!sel.value) return;
-        const ch = S.lib.books.find((x) => x.name === b.name).chapters.find((x) => `${b.name}/${x.name}` === sel.value);
+        const bk = S.lib.books.find((x) => x.name === b.name);
+        const isRef = sel.value.endsWith('/' + REFERENCE);
+        const ch = isRef ? { name: 'Reference notes', sections: bk.notes } : bk.chapters.find((x) => `${b.name}/${x.name}` === sel.value);
         await moveItem(S.current.rel, sel.value, ch.sections.length);
         toast(`Filed into ${ch.name}`);
       } }, 'Move')));
@@ -768,6 +814,7 @@ async function save() {
         S.dirty = false;
         store.del('ws-draft:' + cur.rel);
         setStatus('', 'Saved');
+        if (panelRel === cur.rel) renderPanel();
       }
     }
   } catch (e) {
@@ -801,6 +848,7 @@ function onLibraryChanged(paths) {
     if (paths2.every((p) => p.startsWith('Writing Studio - App Data') || p.startsWith('Writing Studio - Backups'))) return;
     await refresh();
     if (S.current && paths2.some((p) => p === S.current.rel)) await checkCurrentOnDisk();
+    if (panelRel && paths2.some((p) => p === panelRel)) await renderPanel();
   }, 500);
 }
 
@@ -972,7 +1020,7 @@ function settingsDialog() {
         oninput: (e) => { S.settings.measure = +e.target.value; measureOut.textContent = `Line width · about ${Math.round(S.settings.measure * 2)} characters`; saveSettings(); } })),
       h('label', { class: 'check' }, h('input', { type: 'checkbox', id: 'typewriter', checked: !!S.settings.typewriter,
         onchange: (e) => { S.settings.typewriter = e.target.checked; saveSettings(); } }), 'Typewriter scrolling (keep the line you’re writing in the middle)'),
-      h('p', {}, 'Focus mode: ⌘. (hides everything but the paragraph you’re writing). Sidebar: ⌘1. New section: ⌘N. New chapter: ⇧⌘N.'),
+      h('p', {}, 'Focus mode: ⌘. (hides everything but the paragraph you’re writing). Sidebar: ⌘1. Reference panel: ⌘2. New section: ⌘N. New chapter: ⇧⌘N.'),
       h('div', { class: 'field' }, h('span', {}, 'Writing folder'), h('div', { class: 'path' }, S.root),
         h('div', {}, h('button', { class: 'btn', onclick: () => { close(); chooseFolder(); } }, 'Change folder…'))),
       h('div', { class: 'field' }, h('span', {}, 'Updates'), h('div', { class: 'path', id: 'version-line' }, 'Writing Studio'),
@@ -981,6 +1029,62 @@ function settingsDialog() {
     );
     getVersion().then((v) => { const el = $('#version-line'); if (el) el.textContent = `Writing Studio ${v}`; }).catch(() => {});
   });
+}
+
+// ------------------------------------------------------------------ reference panel (read beside the text)
+
+let panelRel = null;
+
+function lightMarkdown(text) {
+  // Headings and list bullets get a little shape; everything else stays as written.
+  return text.split('\n').map((line) => {
+    const m = line.match(/^(#{1,6})\s+(.*)$/);
+    if (m) return h('div', { class: `ref-h ref-h${Math.min(m[1].length, 3)}` }, m[2]);
+    const li = line.match(/^\s*([-*+]|\d+\.)\s+(.*)$/);
+    if (li) return h('div', { class: 'ref-li' }, h('span', { class: 'ref-bullet' }, /\d/.test(li[1]) ? li[1] : '•'), h('span', {}, li[2]));
+    if (!line.trim()) return h('div', { class: 'ref-gap' });
+    return h('div', { class: 'ref-p' }, line);
+  });
+}
+
+async function openPanel(rel) {
+  panelRel = rel;
+  store.set('ws-panel', rel);
+  document.body.classList.add('with-ref');
+  await renderPanel();
+}
+
+function closePanel() {
+  document.body.classList.remove('with-ref');
+  panelRel = null;
+  store.del('ws-panel');
+}
+
+async function renderPanel() {
+  const panel = $('#ref-panel');
+  if (!panel || !panelRel) return;
+  const b = book();
+  const notes = b?.notes || [];
+  let text = '';
+  try { text = (await call('section_read', { rel: panelRel })).text; } catch { closePanel(); return; }
+  const title = panelRel.split('/').at(-1).replace(/\.md$/i, '');
+  const pick = h('select', { id: 'ref-pick', 'aria-label': 'Reference note', onchange: (e) => openPanel(e.target.value) },
+    ...notes.map((n) => h('option', { value: `${b.name}/${REFERENCE}/${n.file}`, selected: `${b.name}/${REFERENCE}/${n.file}` === panelRel }, n.title)),
+    notes.some((n) => `${b.name}/${REFERENCE}/${n.file}` === panelRel) ? null : h('option', { value: panelRel, selected: true }, title));
+  panel.replaceChildren(
+    h('div', { class: 'ref-head' }, pick,
+      h('button', { class: 'icon-btn', title: 'Edit this note', onclick: () => openSection(panelRel) }, 'Edit'),
+      h('button', { class: 'icon-btn', title: 'Close (⌘2)', 'aria-label': 'Close', onclick: closePanel }, '✕')),
+    h('div', { class: 'ref-body' }, text.trim() ? lightMarkdown(text) : h('p', { class: 'ref-p', style: 'color:var(--dim)' }, 'This note is empty.')),
+  );
+}
+
+function togglePanel() {
+  if (document.body.classList.contains('with-ref')) return closePanel();
+  const b = book();
+  const last = store.get('ws-panel');
+  const target = last && findSection(last) ? last : b?.notes[0] ? `${b.name}/${REFERENCE}/${b.notes[0].file}` : null;
+  if (target) openPanel(target); else toast('Add a reference note first (the + next to Reference)');
 }
 
 // ------------------------------------------------------------------ updates
@@ -1032,6 +1136,7 @@ document.addEventListener('keydown', (e) => {
   if (!mod || S.dialogOpen) return;
   if (e.key === '.') { e.preventDefault(); setFocusMode(!document.body.classList.contains('focus-mode')); }
   else if (e.key === '1') { e.preventDefault(); document.body.classList.toggle('no-sidebar'); }
+  else if (e.key === '2') { e.preventDefault(); togglePanel(); }
   else if (e.key.toLowerCase() === 'n' && e.shiftKey) { e.preventDefault(); newChapter(); }
   else if (e.key.toLowerCase() === 'n') { e.preventDefault(); newSection(); }
   else if (e.key === ',') { e.preventDefault(); settingsDialog(); }

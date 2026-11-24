@@ -7,6 +7,7 @@
 //!   <Book>/
 //!     _book.txt            Title and goal
 //!     _order.txt           Chapter order, one folder name per line
+//!     _Reference Notes/    Material to consult while writing (not part of the book)
 //!     <Chapter>/
 //!       _order.txt         Section order, one file name per line
 //!       <Section>.md
@@ -35,6 +36,8 @@ pub const APP_DATA: &str = "Writing Studio - App Data";
 pub const BACKUPS: &str = "Writing Studio - Backups";
 pub const TRASH: &str = "Writing Studio - Trash";
 pub const INBOX: &str = "Writing Studio - Inbox";
+/// Per-book reference material: kept out of chapters, word counts and export.
+pub const REFERENCE: &str = "_Reference Notes";
 const ORDER: &str = "_order.txt";
 const BOOK_META: &str = "_book.txt";
 const RESERVED_PREFIX: &str = "Writing Studio - ";
@@ -71,6 +74,7 @@ pub struct Book {
     pub goal: Option<usize>,
     pub chapters: Vec<Chapter>,
     pub words: usize,
+    pub notes: Vec<Section>,
 }
 
 #[derive(Serialize, Debug)]
@@ -313,7 +317,10 @@ pub fn list_library(root: &Path) -> Res<Library> {
             chapters.push(Chapter { name: ch, sections, words });
         }
         let words = chapters.iter().map(|c| c.words).sum();
+        let ndir = dir.join(REFERENCE);
+        let notes = ordered_files(&ndir).iter().map(|f| section_info(&ndir, f)).collect();
         books.push(Book {
+            notes,
             title: meta.get("title").cloned().unwrap_or_else(|| name.clone()),
             goal: meta.get("goal").and_then(|g| g.replace(',', "").parse().ok()),
             name,
@@ -435,6 +442,7 @@ pub fn move_item(root: &Path, from_rel: &str, to_dir_rel: &str, index: usize) ->
     let is_file = from.is_file();
     let mut final_name = name.clone();
     if from_parent != to_dir {
+        fs::create_dir_all(&to_dir).map_err(err("Could not create folder"))?;
         let (stem, ext) = if is_file { (name.trim_end_matches(".md").to_string(), ".md") } else { (name.clone(), "") };
         let (n, dest) = unique_path(&to_dir, &stem, ext);
         fs::rename(&from, &dest).map_err(err("Could not move"))?;
@@ -806,6 +814,26 @@ mod tests {
         let l = list_library(d.path()).unwrap();
         assert!(l.inbox.is_empty());
         assert_eq!(l.books[0].chapters[0].sections.len(), 2);
+    }
+
+    #[test]
+    fn reference_notes_stay_out_of_chapters_counts_and_export() {
+        let d = lib();
+        let b = create_book(d.path(), "B").unwrap();
+        let notes = format!("{b}/{REFERENCE}");
+        let f = create_section(d.path(), &notes, "Story prompts", None).unwrap();
+        save_section(d.path(), &format!("{notes}/{f}"), "When did a strong performer struggle?", None).unwrap();
+        let l = list_library(d.path()).unwrap();
+        assert_eq!(l.books[0].notes.len(), 1);
+        assert_eq!(l.books[0].chapters.len(), 1);
+        assert_eq!(l.books[0].words, 0);
+        assert!(!export_book(d.path(), &b).unwrap().contains("strong performer"));
+        // Inbox notes can be filed into Reference even before the folder exists.
+        let b2 = create_book(d.path(), "C").unwrap();
+        fs::create_dir_all(d.path().join(INBOX)).unwrap();
+        fs::write(d.path().join(INBOX).join("Idea.md"), "x").unwrap();
+        file_inbox_note(d.path(), "Idea.md", &format!("{b2}/{REFERENCE}")).unwrap();
+        assert_eq!(list_library(d.path()).unwrap().books[1].notes.len(), 1);
     }
 
     #[test]

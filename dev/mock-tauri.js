@@ -8,6 +8,7 @@ const files = new Map(Object.entries({
   'The Bench/Why succession fails/The empty chair.md': '# The empty chair\n\nThe meeting began, as these meetings often do, with a question nobody wanted to answer: *who is ready now?* The chief executive had two years left on her contract.\n\nMost organizations treat succession as an event. It is closer to a **habit**, practised quietly for years before it is ever needed.\n\n> We had plenty of candidates. What we lacked was evidence.\n\n## Three ways it goes wrong\n\nThe first is the heir apparent, chosen early and protected from real tests.',
   'The Bench/Why succession fails/Heirs and spares.md': 'Heirs are named too early.',
   'The Bench/Reading the room/What boards ask.md': 'Boards ask about readiness.',
+  'The Bench/_Reference Notes/Story prompts.md': '# Story prompts\n\n## Broken roles today\n\n- Which role in your organization is quietly impossible?\n- Who is doing two jobs with one title?\n\n## Brain-dump list\n\n- The chess clock image\n',
   'Writing Studio - Inbox/2026.11.23 0930 Idea.md': 'Use the chess clock image in chapter two.',
 }));
 const hash = (s) => { let x = 0; for (const c of s) x = (x * 31 + c.codePointAt(0)) >>> 0; return 'h' + x; };
@@ -49,7 +50,8 @@ const cmds = {
         const sections = order(`${b}/${c}`, kids(`${b}/${c}`, 'md')).map((f) => sec(`${b}/${c}`, f));
         return { name: c, sections, words: sections.reduce((n, s) => n + s.words, 0) };
       });
-      return { name: b, title: meta.Title || b, goal: +meta.Goal || null, chapters, words: chapters.reduce((n, c) => n + c.words, 0) };
+      const notes = order(`${b}/_Reference Notes`, kids(`${b}/_Reference Notes`, 'md')).map((f) => sec(`${b}/_Reference Notes`, f));
+      return { name: b, title: meta.Title || b, goal: +meta.Goal || null, chapters, notes, words: chapters.reduce((n, c) => n + c.words, 0) };
     }),
     inbox: kids('Writing Studio - Inbox', 'md').map((f) => sec('Writing Studio - Inbox', f)),
   }),
