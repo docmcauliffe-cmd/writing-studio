@@ -1,4 +1,4 @@
-//! Typeset exports: a Word document, and HTML that the app prints to PDF.
+//! Typeset exports: a Word document and a PDF.
 //!
 //! Both read the same chapters and sections as the Markdown export. Notes to self
 //! (`<!-- ... -->`) are removed, chapter names become top-level headings, and a
@@ -63,24 +63,6 @@ fn starts_with_heading(text: &str) -> bool {
 
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
-}
-
-// ---------------------------------------------------------------- HTML (printed to PDF)
-
-pub fn export_html(root: &Path, book: &str) -> Res<String> {
-    let (title, parts) = book_parts(root, book)?;
-    let mut out = format!("<header class=\"pr-title\"><h1>{}</h1></header>\n", esc(&title));
-    for p in &parts {
-        out.push_str(&format!("<section class=\"pr-chapter\"><h1>{}</h1>\n", esc(&p.chapter)));
-        for (i, s) in p.sections.iter().enumerate() {
-            if i > 0 && !starts_with_heading(s) {
-                out.push_str("<p class=\"pr-break\">* * *</p>\n");
-            }
-            pulldown_cmark::html::push_html(&mut out, shifted(s));
-        }
-        out.push_str("</section>\n");
-    }
-    Ok(out)
 }
 
 // ---------------------------------------------------------------- Word (.docx)
@@ -367,6 +349,264 @@ pub fn export_docx(root: &Path, book: &str, out: &Path) -> Res<()> {
     atomic_write(out, &docx_bytes(&title, &parts)?)
 }
 
+// ---------------------------------------------------------------- PDF
+
+use genpdf::elements::{Break, PageBreak, Paragraph};
+use genpdf::fonts::{FontData, FontFamily};
+use genpdf::style::{Color, Style};
+use genpdf::{Alignment, Element, Margins};
+
+/// Serif font files to try, best first: Georgia and Times on the Mac, Liberation on Linux.
+const FONT_SETS: &[[&str; 4]] = &[
+    [
+        "/System/Library/Fonts/Supplemental/Georgia.ttf",
+        "/System/Library/Fonts/Supplemental/Georgia Bold.ttf",
+        "/System/Library/Fonts/Supplemental/Georgia Italic.ttf",
+        "/System/Library/Fonts/Supplemental/Georgia Bold Italic.ttf",
+    ],
+    [
+        "/Library/Fonts/Georgia.ttf",
+        "/Library/Fonts/Georgia Bold.ttf",
+        "/Library/Fonts/Georgia Italic.ttf",
+        "/Library/Fonts/Georgia Bold Italic.ttf",
+    ],
+    [
+        "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
+        "/System/Library/Fonts/Supplemental/Times New Roman Bold.ttf",
+        "/System/Library/Fonts/Supplemental/Times New Roman Italic.ttf",
+        "/System/Library/Fonts/Supplemental/Times New Roman Bold Italic.ttf",
+    ],
+    [
+        "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSerif-Italic.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSerif-BoldItalic.ttf",
+    ],
+];
+
+fn serif_family() -> Res<FontFamily<FontData>> {
+    for set in FONT_SETS {
+        let load = |p: &str| fs::read(p).ok().and_then(|b| FontData::new(b, None).ok());
+        if let (Some(regular), Some(bold), Some(italic), Some(bold_italic)) = (load(set[0]), load(set[1]), load(set[2]), load(set[3])) {
+            return Ok(FontFamily { regular, bold, italic, bold_italic });
+        }
+    }
+    Err("Could not find a font for the PDF (Georgia or Times New Roman).".into())
+}
+
+const BODY_PT: u8 = 12;
+const INDENT_MM: f64 = 7.0;
+
+struct Pdf {
+    doc: genpdf::Document,
+    para: Option<Paragraph>,
+    /// Style of the block being written (heading size, quote italics).
+    block: Style,
+    bold: usize,
+    italic: usize,
+    lists: Vec<Option<u64>>,
+    prefix: Option<String>,
+    quote: usize,
+    in_code: bool,
+    space_after: f64,
+    align: Alignment,
+    boxes: (&'static str, &'static str),
+}
+
+impl Pdf {
+    fn style(&self) -> Style {
+        let mut s = self.block;
+        if self.bold > 0 {
+            s.set_bold();
+        }
+        if self.italic > 0 || self.quote > 0 {
+            s.set_italic();
+        }
+        s
+    }
+
+    fn text(&mut self, t: &str) {
+        let style = self.style();
+        let prefix = self.prefix.take();
+        let p = self.para.get_or_insert_with(Paragraph::default);
+        if let Some(pre) = prefix {
+            p.push_styled(pre, Style::new());
+        }
+        if !t.is_empty() {
+            p.push_styled(t.to_string(), style);
+        }
+    }
+
+    fn flush(&mut self) {
+        if let Some(mut p) = self.para.take() {
+            p.set_alignment(self.align);
+            let left = INDENT_MM * (self.lists.len() as f64 + 1.5 * self.quote as f64);
+            let right = if self.quote > 0 { INDENT_MM * 1.5 } else { 0.0 };
+            self.doc.push(p.padded(Margins::trbl(0, right, self.space_after, left)));
+        }
+    }
+
+    fn block_para(&mut self, text: &str, style: Style, align: Alignment, before: f64, after: f64) {
+        self.flush();
+        if before > 0.0 {
+            self.doc.push(Break::new(before));
+        }
+        let mut p = Paragraph::default();
+        p.push_styled(text.to_string(), style);
+        self.doc.push(p.aligned(align).padded(Margins::trbl(0, 0, after, 0)));
+    }
+
+    fn scene_break(&mut self) {
+        self.block_para("*   *   *", Style::new(), Alignment::Center, 0.0, 4.0);
+    }
+
+    fn feed<'a>(&mut self, events: impl Iterator<Item = Event<'a>>) {
+        for e in events {
+            match e {
+                Event::Start(Tag::Paragraph) => {}
+                Event::End(TagEnd::Paragraph) => self.flush(),
+                Event::Start(Tag::Heading { level, .. }) => {
+                    self.flush();
+                    let (size, before) = match level {
+                        HeadingLevel::H1 | HeadingLevel::H2 => (15, 1.0),
+                        HeadingLevel::H3 => (13, 0.6),
+                        _ => (BODY_PT, 0.4),
+                    };
+                    self.doc.push(Break::new(before));
+                    self.block = Style::new().bold().with_font_size(size);
+                    self.space_after = 2.5;
+                }
+                Event::End(TagEnd::Heading(_)) => {
+                    self.flush();
+                    self.block = Style::new();
+                    self.space_after = 3.0;
+                }
+                Event::Start(Tag::BlockQuote(_)) => {
+                    self.flush();
+                    self.quote += 1;
+                }
+                Event::End(TagEnd::BlockQuote(_)) => {
+                    self.flush();
+                    self.quote -= 1;
+                }
+                Event::Start(Tag::CodeBlock(_)) => {
+                    self.flush();
+                    self.in_code = true;
+                    self.space_after = 0.0;
+                }
+                Event::End(TagEnd::CodeBlock) => {
+                    self.in_code = false;
+                    self.space_after = 3.0;
+                    self.doc.push(Break::new(0.5));
+                }
+                Event::Start(Tag::List(start)) => {
+                    self.flush();
+                    self.lists.push(start);
+                    self.space_after = 1.0;
+                }
+                Event::End(TagEnd::List(_)) => {
+                    self.flush();
+                    self.lists.pop();
+                    if self.lists.is_empty() {
+                        self.space_after = 3.0;
+                        self.doc.push(Break::new(0.3));
+                    }
+                }
+                Event::Start(Tag::Item) => {
+                    self.flush();
+                    let marker = match self.lists.last_mut() {
+                        Some(Some(n)) => {
+                            let m = format!("{n}.  ");
+                            *n += 1;
+                            m
+                        }
+                        _ => "•  ".to_string(),
+                    };
+                    self.prefix = Some(marker);
+                }
+                Event::End(TagEnd::Item) => self.flush(),
+                Event::TaskListMarker(done) => {
+                    // A checklist item shows its box instead of a bullet.
+                    self.prefix = Some(format!("{}  ", if done { self.boxes.1 } else { self.boxes.0 }));
+                }
+                Event::Start(Tag::Emphasis) => self.italic += 1,
+                Event::End(TagEnd::Emphasis) => self.italic = self.italic.saturating_sub(1),
+                Event::Start(Tag::Strong) => self.bold += 1,
+                Event::End(TagEnd::Strong) => self.bold = self.bold.saturating_sub(1),
+                Event::Code(t) => self.text(&t),
+                Event::Text(t) => {
+                    if self.in_code {
+                        for line in t.lines() {
+                            self.text(if line.is_empty() { " " } else { line });
+                            self.flush();
+                        }
+                    } else {
+                        self.text(&t);
+                    }
+                }
+                Event::SoftBreak => self.text(" "),
+                Event::HardBreak => {
+                    let keep = self.space_after;
+                    self.space_after = 0.0;
+                    self.flush();
+                    self.space_after = keep;
+                }
+                Event::Rule => self.scene_break(),
+                _ => {}
+            }
+        }
+        self.flush();
+    }
+}
+
+/// Build the PDF's bytes: a title page, then each chapter on a new page.
+pub fn pdf_bytes(title: &str, parts: &[Part]) -> Res<Vec<u8>> {
+    let family = serif_family()?;
+    let mut doc = genpdf::Document::new(family);
+    doc.set_title(title);
+    doc.set_font_size(BODY_PT);
+    doc.set_line_spacing(1.35);
+    doc.set_paper_size(genpdf::Size::new(215.9, 279.4)); // US Letter
+    let mut deco = genpdf::SimplePageDecorator::new();
+    deco.set_margins(Margins::trbl(14, 25, 25, 25));
+    deco.set_header(|page| {
+        // Page numbers sit quietly at the top; the title page has none.
+        let label = if page > 1 { page.to_string() } else { " ".into() };
+        Paragraph::new(genpdf::style::StyledString::new(label, Style::new().with_font_size(9).with_color(Color::Greyscale(120))))
+            .aligned(Alignment::Center)
+            .padded(Margins::trbl(0, 0, 10, 0))
+    });
+    doc.set_page_decorator(deco);
+
+    // Use real check boxes when the font has them.
+    let font = doc.font_cache().default_font_family().regular;
+    let has = |c: &str| font.glyph_ids(doc.font_cache(), c.chars()).iter().all(|g| *g != 0);
+    let boxes = if has("☐☑") { ("☐", "☑") } else if has("○●") { ("○", "●") } else { ("[ ]", "[x]") };
+
+    let mut pdf = Pdf { doc, para: None, block: Style::new(), bold: 0, italic: 0, lists: vec![], prefix: None, quote: 0, in_code: false, space_after: 3.0, align: Alignment::Left, boxes };
+    pdf.doc.push(Break::new(12));
+    pdf.block_para(title, Style::new().with_font_size(28), Alignment::Center, 0.0, 0.0);
+    for p in parts {
+        pdf.flush();
+        pdf.doc.push(PageBreak::new());
+        pdf.block_para(&p.chapter, Style::new().with_font_size(20), Alignment::Center, 5.0, 14.0);
+        for (i, s) in p.sections.iter().enumerate() {
+            if i > 0 && !starts_with_heading(s) {
+                pdf.scene_break();
+            }
+            pdf.feed(shifted(s));
+        }
+    }
+    let mut out = Vec::new();
+    pdf.doc.render(&mut out).map_err(|e| format!("Could not build the PDF: {e}"))?;
+    Ok(out)
+}
+
+pub fn export_pdf(root: &Path, book: &str, out: &Path) -> Res<()> {
+    let (title, parts) = book_parts(root, book)?;
+    atomic_write(out, &pdf_bytes(&title, &parts)?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -400,7 +640,27 @@ mod tests {
     }
 
     #[test]
-    fn html_export_shifts_headings() {
+    fn pdf_export_renders_pages() {
+        let parts = vec![
+            Part {
+                chapter: "One & Two".into(),
+                sections: vec![
+                    "# Opening\n\nA **bold** and *quiet* start, with “quotes” — and a dash. ".repeat(1) + &"A longer paragraph that keeps going so it wraps across several lines of the page and shows the spacing. ".repeat(12) + "\n\n- first\n- [x] done\n- [ ] open\n  - nested\n\n1. a\n2. b\n\n> A quote that is long enough to wrap onto a second line inside the margins of the page.",
+                    "Second scene.\n\n---\n\nAfter a rule.".into(),
+                ],
+            },
+            Part { chapter: "Three".into(), sections: vec!["Last words.".into()] },
+        ];
+        let bytes = pdf_bytes("My Book", &parts).unwrap();
+        if let Ok(out) = std::env::var("WS_PDF_OUT") {
+            fs::write(out, &bytes).unwrap();
+        }
+        assert!(bytes.starts_with(b"%PDF"));
+        assert!(bytes.len() > 10_000, "fonts and pages were written");
+    }
+
+    #[test]
+    fn pdf_export_writes_book_without_notes() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         crate::library::create_book(root, "Bk").unwrap();
@@ -409,11 +669,11 @@ mod tests {
         let rel = format!("Bk/{}/{}", ch.name, ch.sections[0].file);
         crate::library::save_section(root, &rel, "# Head\n\nText <!-- hidden --> here.", None).unwrap();
         crate::library::save_section(root, &rel, "# Head\n\nText <!-- hidden --> here, with *feeling* and **force**.\n\nA second paragraph that runs on long enough to wrap across the line and show the indent.\n\n- one\n- [x] two\n\n> A quote.", Some(&crate::library::hash("# Head\n\nText <!-- hidden --> here."))).unwrap();
-        let html = export_html(root, "Bk").unwrap();
-        if let Ok(out) = std::env::var("WS_HTML_OUT") {
-            fs::write(out, &html).unwrap();
-        }
-        assert!(html.contains("<h2>Head</h2>"));
-        assert!(!html.contains("hidden"));
+        let (_, parts) = book_parts(root, "Bk").unwrap();
+        assert!(parts[0].sections[0].starts_with("# Head"));
+        assert!(!parts[0].sections[0].contains("hidden"));
+        let out = root.join("Bk.pdf");
+        export_pdf(root, "Bk", &out).unwrap();
+        assert!(fs::read(&out).unwrap().starts_with(b"%PDF"));
     }
 }

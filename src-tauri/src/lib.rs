@@ -111,14 +111,8 @@ fn book_export_docx(root_dir: String, book: String, path: String) -> Res<()> {
 }
 
 #[tauri::command]
-fn book_export_html(root_dir: String, book: String) -> Res<String> {
-    export::export_html(&root(&root_dir), &book)
-}
-
-/// Open the Mac print dialog for the window (its PDF button saves the book as a PDF).
-#[tauri::command]
-fn print_window(window: tauri::WebviewWindow) -> Res<()> {
-    window.print().map_err(|e| format!("Could not open the print dialog: {e}"))
+async fn book_export_pdf(root_dir: String, book: String, path: String) -> Res<()> {
+    export::export_pdf(&root(&root_dir), &book, Path::new(&path))
 }
 
 #[tauri::command]
@@ -226,8 +220,7 @@ pub fn run() {
             inbox_file,
             book_export,
             book_export_docx,
-            book_export_html,
-            print_window,
+            book_export_pdf,
             export_write,
             settings_read,
             settings_write,

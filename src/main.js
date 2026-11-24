@@ -1338,16 +1338,10 @@ async function exportPdf() {
   const b = book();
   if (!b) return;
   await flushSave();
-  let html;
-  try { html = await call('book_export_html', { book: b.name }); } catch (e) { toast(String(e), 6000); return; }
-  let root = $('#print-root');
-  if (!root) { root = h('div', { id: 'print-root' }); document.body.append(root); }
-  root.innerHTML = html;
-  document.title = `${b.title} - Manuscript`;
-  toast('In the print window, choose PDF › Save as PDF', 6000);
-  await sleep(60);
-  try { await invoke('print_window'); } catch { window.print(); }
-  setTimeout(() => { root.innerHTML = ''; document.title = 'Writing Studio'; }, 1500);
+  const path = await saveDialog({ defaultPath: `${b.title} - Manuscript ${stamp().slice(0, 10)}.pdf`, filters: [{ name: 'PDF', extensions: ['pdf'] }] });
+  if (!path) return;
+  toast('Making the PDF…');
+  try { await call('book_export_pdf', { book: b.name, path }); toast('Exported to PDF'); } catch (e) { toast(String(e), 6000); }
 }
 
 // ------------------------------------------------------------------ goals

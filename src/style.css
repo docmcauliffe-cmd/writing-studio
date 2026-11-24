@@ -237,27 +237,3 @@ input[type=range] { width: 100%; accent-color: var(--hl); }
 .goal-chip.met { color: var(--ok); }
 .ref-q { border-left: 3px solid var(--rule); padding-left: 10px; font-style: italic; }
 .ref-body code { font-family: var(--mono); font-size: .92em; }
-#print-root { display: none; }
-
-@media print {
-  @page { size: letter; margin: 1in; }
-  body { overflow: visible !important; background: #fff !important; }
-  #app, .overlay, .toast, .menu { display: none !important; }
-  #print-root { display: block !important; color: #111; font: 12pt/1.6 Georgia, "Times New Roman", serif; }
-  #print-root .pr-title { height: 8.5in; display: flex; align-items: center; justify-content: center; page-break-after: always; }
-  #print-root .pr-title h1 { font-size: 30pt; font-weight: 400; text-align: center; }
-  #print-root .pr-chapter { page-break-before: always; }
-  #print-root .pr-chapter > h1 { font-size: 20pt; font-weight: 400; text-align: center; margin: 1.6in 0 .5in; }
-  #print-root h2 { font-size: 14pt; margin: 1.6em 0 .6em; page-break-after: avoid; }
-  #print-root h3, #print-root h4 { font-size: 12pt; margin: 1.2em 0 .4em; page-break-after: avoid; }
-  #print-root p { margin: 0; text-indent: 1.5em; orphans: 2; widows: 2; }
-  #print-root h1 + p, #print-root h2 + p, #print-root h3 + p, #print-root .pr-break + p { text-indent: 0; }
-  #print-root .pr-break { text-align: center; text-indent: 0; margin: 1em 0; }
-  #print-root blockquote { margin: .8em 2em; font-style: italic; }
-  #print-root blockquote p { text-indent: 0; }
-  #print-root ul, #print-root ol { margin: .5em 0 .5em 1.5em; padding: 0; }
-  #print-root li p { text-indent: 0; }
-  #print-root li:has(> input[type=checkbox]) { list-style: none; margin-left: -1.2em; }
-  #print-root code { font: 10pt Menlo, monospace; }
-  #print-root pre { white-space: pre-wrap; font: 10pt Menlo, monospace; margin: .8em 0; }
-}
