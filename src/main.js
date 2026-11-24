@@ -1040,6 +1040,8 @@ function lightMarkdown(text) {
   return text.split('\n').map((line) => {
     const m = line.match(/^(#{1,6})\s+(.*)$/);
     if (m) return h('div', { class: `ref-h ref-h${Math.min(m[1].length, 3)}` }, m[2]);
+    const task = line.match(/^\s*[-*+]\s+\[([ xX])\]\s*(.*)$/);
+    if (task) return h('div', { class: 'ref-li' + (task[1] === ' ' ? '' : ' ref-done') }, h('span', { class: 'ref-bullet' }, task[1] === ' ' ? '☐' : '☑'), h('span', {}, task[2]));
     const li = line.match(/^\s*([-*+]|\d+\.)\s+(.*)$/);
     if (li) return h('div', { class: 'ref-li' }, h('span', { class: 'ref-bullet' }, /\d/.test(li[1]) ? li[1] : '•'), h('span', {}, li[2]));
     if (!line.trim()) return h('div', { class: 'ref-gap' });

@@ -50,10 +50,15 @@ When a new version is published, an **Update to x.y.z** button appears at the to
 | --- | --- |
 | ⌘. | Focus mode: hide everything but the paragraph you're writing |
 | ⌘1 | Show or hide the sidebar |
+| ⌘2 | Show or hide the Reference note beside your writing |
+| ⌘B / ⌘I | Bold / italic (the selection, or the word the cursor is in) |
+| ⇧⌘L | Turn lines into a checklist, or back |
 | ⌘N | New section after the current one |
 | ⇧⌘N | New chapter |
 | ⌘, | Look & settings |
 | ⌘S | Save now (it saves automatically anyway) |
+
+Lists: start a line with `* ` or `- ` for a bullet, `1. ` for a numbered list, or `- [ ] ` for a checkbox you can click. Return continues the list; Return on an empty item ends it.
 
 Double-click a chapter or section to rename it. Right-click for more options. Drag sections and chapters to reorder them, or drop a section on a chapter title to move it there.
 
