@@ -40,6 +40,10 @@ Both Macs run the same app on the same folder. If a section changes on the other
 
 On each Mac, right-click the Writing Studio folder in Finder and choose **Google Drive › Available offline**, so you can write without a connection.
 
+## Updates
+
+When a new version is published, an **Update to x.y.z** button appears at the top right. Click it: your writing is saved, the update installs, and the app restarts. You can also check in **Look & settings › Check for updates**. Updates come from this repository's Releases and are signed, so the app only installs versions built here. Install the update on each Mac.
+
 ## Shortcuts
 
 | Keys | Action |

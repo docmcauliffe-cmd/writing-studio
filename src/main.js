@@ -21,6 +21,9 @@ import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { homeDir } from '@tauri-apps/api/path';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
+import { check as checkUpdate } from '@tauri-apps/plugin-updater';
+import { relaunch } from '@tauri-apps/plugin-process';
+import { getVersion } from '@tauri-apps/api/app';
 import { createEditor } from './editor.js';
 import { lineDiff, wordCount, formatCount, stamp, snapshotDue, otherDeviceOn, dropIndex, minutesAgo } from './logic.js';
 
@@ -235,7 +238,9 @@ function shell() {
     h('main', { class: 'main' },
       h('div', { class: 'topbar', 'data-tauri-drag-region': true },
         h('span', { class: 'crumb', id: 'crumb' }),
-        h('span', { class: 'status', id: 'status' }, h('i'), h('span', {}, 'Saved'))),
+        h('span', { class: 'top-right' },
+          h('span', { id: 'update-slot' }),
+          h('span', { class: 'status', id: 'status' }, h('i'), h('span', {}, 'Saved')))),
       h('div', { id: 'banner-slot' }),
       h('div', { class: 'editor-host', id: 'editor-host' }),
       h('div', { class: 'foot', id: 'foot' })),
@@ -970,9 +975,45 @@ function settingsDialog() {
       h('p', {}, 'Focus mode: ⌘. (hides everything but the paragraph you’re writing). Sidebar: ⌘1. New section: ⌘N. New chapter: ⇧⌘N.'),
       h('div', { class: 'field' }, h('span', {}, 'Writing folder'), h('div', { class: 'path' }, S.root),
         h('div', {}, h('button', { class: 'btn', onclick: () => { close(); chooseFolder(); } }, 'Change folder…'))),
+      h('div', { class: 'field' }, h('span', {}, 'Updates'), h('div', { class: 'path', id: 'version-line' }, 'Writing Studio'),
+        h('div', {}, h('button', { class: 'btn', onclick: () => checkForUpdates(true) }, 'Check for updates'))),
       h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: close }, 'Done')),
     );
+    getVersion().then((v) => { const el = $('#version-line'); if (el) el.textContent = `Writing Studio ${v}`; }).catch(() => {});
   });
+}
+
+// ------------------------------------------------------------------ updates
+
+let pendingUpdate = null;
+async function checkForUpdates(manual = false) {
+  try {
+    const u = await checkUpdate();
+    if (u) {
+      pendingUpdate = u;
+      const slot = $('#update-slot');
+      if (slot) slot.replaceChildren(h('button', { class: 'update-pill', onclick: installUpdate, title: 'Install the new version and restart' }, `Update to ${u.version}`));
+      if (manual) toast(`Version ${u.version} is available`);
+    } else if (manual) toast('Writing Studio is up to date');
+  } catch (e) {
+    if (manual) toast(`Couldn’t check for updates: ${e}`, 6000);
+  }
+}
+
+async function installUpdate() {
+  if (!pendingUpdate) return;
+  const ok = await confirmBox(`Update to version ${pendingUpdate.version}?`,
+    'Your writing is saved first. Writing Studio then installs the update and restarts, which takes a few seconds.', 'Update and restart');
+  if (!ok) return;
+  await flushSave();
+  setStatus('editing', 'Updating');
+  try {
+    await pendingUpdate.downloadAndInstall();
+    await relaunch();
+  } catch (e) {
+    setStatus('error', 'Update failed');
+    toast(`The update didn’t install: ${e}. Your writing is untouched.`, 8000);
+  }
 }
 
 // ------------------------------------------------------------------ keys, focus mode, lifecycle
@@ -1005,5 +1046,7 @@ getCurrentWindow().onCloseRequested(async () => { await flushSave(); await pingA
 setInterval(() => { if (document.hasFocus() && S.current) pingActivity(); }, 30_000);
 setInterval(() => { if (S.current) checkOtherDevice(); }, 60_000);
 setInterval(snapshotTick, 5 * 60_000);
+setTimeout(() => checkForUpdates(false), 5000);
+setInterval(() => checkForUpdates(false), 6 * 60 * 60_000);
 
 boot();

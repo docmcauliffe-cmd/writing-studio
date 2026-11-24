@@ -178,6 +178,8 @@ fn watch_start(app: tauri::AppHandle, state: State<WatchState>, root_dir: String
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(WatchState::default())
         .invoke_handler(tauri::generate_handler![
             device_name,

@@ -73,6 +73,8 @@ const cmds = {
   snapshot_list: () => [{ file: '2026.11.23 1400 - iMac.zip', when: 'Mon Nov 23, 2026 at 2:00 PM', device: 'iMac', bytes: 2048 }],
   snapshot_restore: () => 'The Bench',
   'plugin:event|listen': () => 1,
+  'plugin:updater|check': () => (window.__mockUpdate ? { rid: 1, currentVersion: '0.1.1', version: '0.2.0', date: null, body: '', rawJson: {} } : null),
+  'plugin:app|version': () => '0.1.1',
   'plugin:event|unlisten': () => null,
 };
 window.__mockFiles = files;
