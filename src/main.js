@@ -1520,7 +1520,7 @@ function setFocusMode(on) {
 
 document.addEventListener('keydown', (e) => {
   const mod = e.metaKey || e.ctrlKey;
-  if (e.key === 'Escape') {
+  if (e.key === 'Escape' && !e.defaultPrevented) {
     if (document.querySelector('.menu')) return closeMenus();
     if (document.body.classList.contains('focus-mode')) return setFocusMode(false);
   }

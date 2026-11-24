@@ -210,7 +210,7 @@ const caretGuard = EditorState.transactionFilter.of((tr) => {
     const line = doc.lineAt(r.head);
     // A click or End that lands just before hidden closing marks at the end of a line
     // goes past them, so the next words aren't silently bold.
-    if (!tr.docChanged && r.head < line.to && /^(\*\*|\*|__|_|~~|`)+$/.test(doc.sliceString(r.head, line.to))) {
+    if (!tr.docChanged && r.head < line.to && /^(\*\*|\*|__|_|~~|`| ?-->)+$/.test(doc.sliceString(r.head, line.to))) {
       changed = true;
       return EditorSelection.cursor(line.to);
     }
@@ -424,6 +424,7 @@ export function clearFormatting(view) {
 
 export function insertNote(view) {
   const r = view.state.selection.main;
+  if (r.empty && noteAt(view.state, r.head)) return exitNote(false)(view);
   if (r.empty) {
     view.dispatch({ changes: { from: r.from, insert: '<!--  -->' }, selection: { anchor: r.from + 5 }, userEvent: 'input.format' });
   } else {
@@ -440,6 +441,44 @@ export function insertLink(view, url) {
   const text = view.state.sliceDoc(from, to) || url;
   view.dispatch({ changes: { from, to, insert: `[${text}](${url})` }, selection: { anchor: from + text.length + url.length + 4 }, userEvent: 'input.format' });
   return true;
+}
+
+/** The note to self around `pos`, if any: { from, to, contentFrom, contentTo }. */
+function noteAt(state, pos) {
+  const lo = Math.max(0, pos - 20000);
+  const before = state.sliceDoc(lo, pos);
+  const open = before.lastIndexOf('<!--');
+  if (open < 0 || before.indexOf('-->', open + 4) >= 0) return null;
+  const after = state.sliceDoc(pos, Math.min(state.doc.length, pos + 20000));
+  const close = after.indexOf('-->');
+  if (close < 0) return null;
+  const from = lo + open, to = pos + close + 3;
+  const contentFrom = from + 4 + (state.sliceDoc(from + 4, from + 5) === ' ' ? 1 : 0);
+  const contentTo = to - 3 - (state.sliceDoc(to - 4, to - 3) === ' ' ? 1 : 0);
+  return { from, to, contentFrom, contentTo: Math.max(contentFrom, contentTo) };
+}
+
+/**
+ * Step out of a note to self. Return at the end of a note ends it and starts a new
+ * line; an empty note is removed. ⇧⌘K and Esc inside a note just step past it.
+ */
+function exitNote(newline) {
+  return (view) => {
+    const r = view.state.selection.main;
+    if (!r.empty) return false;
+    const n = noteAt(view.state, r.head);
+    if (!n) return false;
+    if (newline && r.head < n.contentTo) return false; // Return in the middle: a line break inside the note
+    const empty = !view.state.sliceDoc(n.contentFrom, n.contentTo).trim();
+    if (empty) {
+      view.dispatch({ changes: { from: n.from, to: n.to, insert: newline ? '\n' : '' }, selection: { anchor: n.from + (newline ? 1 : 0) }, userEvent: 'input' });
+    } else if (newline) {
+      view.dispatch({ changes: { from: n.to, insert: '\n' }, selection: { anchor: n.to + 1 }, scrollIntoView: true, userEvent: 'input' });
+    } else {
+      view.dispatch({ selection: { anchor: n.to } });
+    }
+    return true;
+  };
 }
 
 /** Return on an empty quote line ends the quote. */
@@ -606,7 +645,7 @@ export function createEditor(parent, { onChange, extraKeys = [], onLink, onActio
     barMouse,
     search({ top: true }),
     placeholder('Start writing…'),
-    Prec.highest(keymap.of([{ key: 'Backspace', run: deleteBy(false) }, { key: 'Delete', run: deleteBy(true) }, { key: 'Enter', run: endEmptyQuote }, ...shifted])),
+    Prec.highest(keymap.of([{ key: 'Backspace', run: deleteBy(false) }, { key: 'Delete', run: deleteBy(true) }, { key: 'Enter', run: exitNote(true) }, { key: 'Enter', run: endEmptyQuote }, { key: 'Escape', run: exitNote(false) }, ...shifted])),
     keymap.of([...keys, ...extraKeys, ...searchKeymap, ...defaultKeymap, ...historyKeymap]),
     focus.of(focusOn ? focusPlugin : []),
     tw.of(twOn ? typewriter() : []),

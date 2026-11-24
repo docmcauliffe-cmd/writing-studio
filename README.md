@@ -51,7 +51,7 @@ The text looks formatted while you write: bold is bold and headings are headings
 - **Format menu** in the menu bar, and a small bar that appears when you select text.
 - **⌘B / ⌘I** work like Pages. With a selection, they toggle it. With the cursor inside a word, they format the word. Anywhere else, they turn bold or italic on for what you type next; press again to turn it off.
 - **Lists**: ⇧⌘8 bullets, ⇧⌘7 numbers, ⇧⌘L checklist (click a box to tick it). Return adds the next item, Return on an empty item ends the list, and Tab / ⇧Tab nest and un-nest.
-- **Notes to self** (⇧⌘K): highlighted comments that are never counted or exported. Saved as `<!-- note -->`, which other Markdown apps hide too.
+- **Notes to self** (⇧⌘K): highlighted comments that are never counted or exported. Return at the end of a note, ⇧⌘K again, or Esc steps back out to normal text. Saved as `<!-- note -->`, which other Markdown apps hide too.
 - **Smart quotes and dashes**: “curly” quotes, `--` becomes —, `...` becomes …. Turn off in Edit › Smart Quotes and Dashes.
 - **Quick Open (⌘O)** jumps to any section by typing a few letters. **Find (⌘F)** searches the section; **Find in Book (⇧⌘F)** searches and replaces across the whole book (a backup snapshot is taken before replacing).
 - **Export** (File menu, or the book menu): Word (.docx), PDF (through the print window: PDF › Save as PDF), or Markdown. Chapters start on new pages; notes to self are left out.
