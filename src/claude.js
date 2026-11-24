@@ -92,5 +92,20 @@ export function projectId(link) {
   return m ? m[1].toLowerCase() : null;
 }
 
+/**
+ * Why a pasted Project link won't work, in plain words, or null when it will (or is empty).
+ * The common mix-up: a Claude Code project link (claude.ai/code/…, ids starting chan_)
+ * instead of a chat Project from claude.ai › Projects.
+ */
+export function projectLinkProblem(link) {
+  const v = String(link || '').trim();
+  if (!v || projectId(v)) return null;
+  const example = 'It looks like claude.ai/project/ followed by a long code of letters, numbers and dashes.';
+  if (/\bchan_|claude\.ai\/code\b|^claude:\/\/code\b/i.test(v)) {
+    return 'That’s a link to a Claude Code project, which can’t hold a chat. Use a Project from Projects in claude.ai’s sidebar instead. ' + example;
+  }
+  return 'That isn’t a Claude Project link. In claude.ai, open the Project from Projects in the sidebar and copy the address. ' + example;
+}
+
 /** Notes whose title mentions stories or prompts are the ones Find a story sends along. */
 export const isStoryNote = (title) => /\bstor(y|ies)\b|\bprompts?\b/i.test(title);
