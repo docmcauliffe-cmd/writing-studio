@@ -25,7 +25,8 @@ import { check as checkUpdate } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { getVersion } from '@tauri-apps/api/app';
-import { createEditor } from './editor.js';
+import { createEditor, CLAUDE_ICON } from './editor.js';
+import { ACTIONS as CLAUDE_ACTIONS, buildPrompt, claudeTarget, projectId, isStoryNote } from './claude.js';
 import { lineDiff, wordCount, formatCount, stamp, snapshotDue, otherDeviceOn, dropIndex, minutesAgo } from './logic.js';
 
 const INBOX = 'Writing Studio - Inbox';
@@ -38,7 +39,7 @@ const FONTS = {
   mono: { name: 'Plex Mono', css: '"IBM Plex Mono", ui-monospace, Menlo, monospace' },
 };
 const LOOKS = { sepia: 'Sepia', paper: 'Paper', studio: 'Studio', night: 'Night' };
-const DEFAULTS = { look: 'sepia', font: 'plex', size: 19, measure: 34, typewriter: false, smart: true, dailyGoal: null, targets: {} };
+const DEFAULTS = { look: 'sepia', font: 'plex', size: 19, measure: 34, typewriter: false, smart: true, dailyGoal: null, targets: {}, claudeVia: 'app', claudeBooks: {} };
 
 // ------------------------------------------------------------------ small helpers
 
@@ -321,6 +322,7 @@ function shell() {
         h('span', { class: 'crumb', id: 'crumb' }),
         h('span', { class: 'top-right' },
           h('span', { id: 'update-slot' }),
+          h('button', { class: 'icon-btn ask-btn', id: 'ask-btn', title: 'Ask Claude (⌘J)', 'aria-label': 'Ask Claude', onclick: () => askClaude() }),
           h('span', { class: 'status', id: 'status' }, h('i'), h('span', {}, 'Saved')))),
       h('div', { id: 'banner-slot' }),
       h('div', { class: 'editor-host', id: 'editor-host' }),
@@ -338,6 +340,7 @@ function shell() {
       { key: 'Mod-s', run: () => { flushSave(); return true; } },
     ],
   });
+  $('#ask-btn').innerHTML = CLAUDE_ICON;
   applySettings();
 }
 
@@ -1123,6 +1126,7 @@ function settingsDialog() {
       h('label', { class: 'check' }, h('input', { type: 'checkbox', id: 'smart', checked: S.settings.smart !== false,
         onchange: (e) => { S.settings.smart = e.target.checked; saveSettings(); } }), 'Smart quotes and dashes (“curly” quotes, -- becomes —, ... becomes …)'),
       h('p', {}, h('a', { href: '#', onclick: (e) => { e.preventDefault(); close(); shortcutsDialog(); } }, 'Formatting and keyboard shortcuts')),
+      ...claudeSettings(),
       h('div', { class: 'field' }, h('span', {}, 'Writing folder'), h('div', { class: 'path' }, S.root),
         h('div', {}, h('button', { class: 'btn', onclick: () => { close(); chooseFolder(); } }, 'Change folder…'))),
       h('div', { class: 'field' }, h('span', {}, 'Updates'), h('div', { class: 'path', id: 'version-line' }, 'Writing Studio'),
@@ -1536,6 +1540,7 @@ function shortcutsDialog() {
     ['Indent or outdent a list item', 'Tab  ⇧Tab'],
     ['Link', '⌘K'],
     ['Note to self (not counted or exported)', '⇧⌘K'],
+    ['Ask Claude about the selection or section', '⌘J'],
     ['Clear formatting', '⌘\\'],
     ['Quick Open: jump to any section', '⌘O'],
     ['Find / Find in Book', '⌘F  ⇧⌘F'],
@@ -1551,6 +1556,171 @@ function shortcutsDialog() {
       h('div', { class: 'keys' }, ...rows.flatMap(([a, k]) => [h('span', {}, a), h('kbd', {}, k)])),
       h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: close }, 'Done')));
   });
+}
+
+// ------------------------------------------------------------------ Ask Claude
+// Opens a new chat in Claude with the passage and a request already typed in. Nothing is
+// sent until Nick presses send there. Long text, or a chat in the book's Project (which
+// can't be prefilled), goes on the clipboard instead.
+
+const claudeBook = (name = S.book) => (name && S.settings.claudeBooks?.[name]) || {};
+function setClaudeBook(name, patch) {
+  const books = { ...(S.settings.claudeBooks || {}) };
+  const next = { ...books[name], ...patch };
+  for (const k of Object.keys(next)) if (!next[k]) delete next[k];
+  if (Object.keys(next).length) books[name] = next; else delete books[name];
+  S.settings.claudeBooks = books;
+  saveSettings();
+}
+
+function claudeSettings() {
+  const b = book();
+  const via = h('div', { class: 'chips', id: 'claude-via' },
+    ...[['app', 'Claude app'], ['web', 'claude.ai in the browser']].map(([v, label]) => h('button', {
+      id: `claude-via-${v}`, 'aria-pressed': String((S.settings.claudeVia || 'app') === v),
+      onclick: (e) => {
+        S.settings.claudeVia = v; saveSettings();
+        e.currentTarget.parentElement.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === e.currentTarget)));
+      },
+    }, label)));
+  const out = [h('div', { class: 'field' }, h('span', {}, 'Ask Claude (⌘J) opens in'), via)];
+  if (!b) return out;
+  const cb = claudeBook(b.name);
+  const about = h('input', { type: 'text', id: 'claude-about', value: cb.about || '', placeholder: 'e.g. For executives: why the leadership bench is vanishing',
+    oninput: (e) => setClaudeBook(b.name, { about: e.target.value.trim() }) });
+  const hint = h('small', { class: 'hint', id: 'claude-project-hint' });
+  const showHint = (v) => { hint.textContent = !v.trim() ? 'Optional. In claude.ai, open the Project and copy its address.' : projectId(v) ? '✓ Ask Claude can open this Project.' : 'That doesn’t look like a Project link (claude.ai/project/…).'; };
+  const project = h('input', { type: 'text', id: 'claude-project', value: cb.project || '', placeholder: 'Paste the Project’s link',
+    oninput: (e) => { showHint(e.target.value); setClaudeBook(b.name, { project: projectId(e.target.value) ? e.target.value.trim() : '' }); } });
+  showHint(project.value);
+  out.push(
+    h('label', { class: 'field' }, h('span', {}, `What “${b.title}” is about`), about,
+      h('small', { class: 'hint' }, 'Optional. One line Claude gets with every request, so it knows your readers.')),
+    h('label', { class: 'field' }, h('span', {}, `Claude Project for “${b.title}”`), project, hint));
+  return out;
+}
+
+async function storyPrompts(b) {
+  if (!b) return '';
+  const texts = [];
+  for (const n of b.notes.filter((x) => isStoryNote(x.title))) {
+    const rel = `${b.name}/${REFERENCE}/${n.file}`;
+    const text = S.current?.rel === rel ? editor.text() : (await call('section_read', { rel }).catch(() => null))?.text;
+    if (text?.trim()) texts.push(text.trim());
+  }
+  return texts.join('\n\n');
+}
+
+function markEl() { const m = h('span', { class: 'ask-mark' }); m.innerHTML = CLAUDE_ICON; return m; }
+
+function askClaude() {
+  if (!S.current) { toast('Open a section first, then Ask Claude about it.'); return; }
+  const sel = editor.selection();
+  const whole = !sel.text.trim();
+  const text = whole ? editor.text() : sel.text;
+  if (!text.trim()) { toast('Nothing to ask about yet. Write a little first.'); return; }
+  const c = S.current;
+  const b = c.inbox ? null : book();
+  const cb = b ? claudeBook(b.name) : {};
+  const hasProject = !!projectId(cb.project);
+  let toProject = hasProject && store.get('ws-claude-to-project', false);
+  const words = wordCount(text);
+  const what = whole ? `This section, “${c.title}”` : 'The selected passage';
+
+  dialog((box, close) => {
+    box.classList.add('ask');
+    let on = 0;
+    const rows = CLAUDE_ACTIONS.map((a, i) => h('button', {
+      class: 'ask-item', dataset: { id: a.id },
+      onmouseenter: () => mark(i),
+      onclick: () => choose(a.id),
+    }, h('kbd', {}, a.key), h('span', { class: 'ask-label' }, a.label), h('span', { class: 'ask-hint' }, a.hint)));
+    const mark = (i) => { on = (i + rows.length) % rows.length; rows.forEach((r, j) => r.classList.toggle('on', j === on)); };
+    const list = h('div', { class: 'ask-list' }, ...rows);
+
+    const dest = hasProject ? h('div', { class: 'chips ask-dest' },
+      ...[[false, 'New chat'], [true, `“${b.title}” Project`]].map(([v, label]) => h('button', {
+        'aria-pressed': String(toProject === v),
+        onclick: (e) => {
+          toProject = v; store.set('ws-claude-to-project', v); footText();
+          e.currentTarget.parentElement.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === e.currentTarget)));
+        },
+      }, label))) : null;
+
+    const foot = h('p', { class: 'ask-foot' });
+    const footText = () => { foot.textContent = toProject
+      ? 'Opens the Project and copies your text, ready to paste. Nothing is sent until you press send there.'
+      : 'Opens in Claude with your text filled in. Nothing is sent until you press send there.'; };
+    footText();
+
+    const step1 = () => box.replaceChildren(
+      h('div', { class: 'ask-head' }, markEl(), h('h2', {}, 'Ask Claude')),
+      h('p', { class: 'ask-what' }, `${what} · ${formatCount(words)} ${words === 1 ? 'word' : 'words'}`),
+      list, ...(dest ? [dest] : []), foot);
+
+    const question = () => {
+      const input = h('textarea', { id: 'ask-question', rows: 3, placeholder: 'e.g. Is the opening too slow for a busy executive?' });
+      const go = () => { if (input.value.trim()) send('ask', input.value); else input.focus(); };
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go(); }
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); step1(); setTimeout(() => rows[on]?.focus()); }
+      });
+      box.replaceChildren(
+        h('div', { class: 'ask-head' }, markEl(), h('h2', {}, 'Ask anything')),
+        h('p', { class: 'ask-what' }, `${what} · ${formatCount(words)} ${words === 1 ? 'word' : 'words'}`),
+        input, ...(dest ? [dest] : []), foot,
+        h('div', { class: 'actions' },
+          h('button', { class: 'btn', onclick: () => { step1(); setTimeout(() => rows[on]?.focus()); } }, 'Back'),
+          h('button', { class: 'btn primary', onclick: go }, 'Open in Claude')));
+      setTimeout(() => input.focus());
+    };
+
+    const choose = (id) => (id === 'ask' ? question() : send(id));
+
+    const send = async (id, q) => {
+      const prompt = buildPrompt(id, {
+        text, whole, question: q,
+        bookTitle: b?.title, about: cb.about,
+        chapter: c.note ? null : c.chapter, section: c.note ? `${c.title} (a reference note)` : c.title,
+        stories: id === 'story' ? await storyPrompts(b) : '',
+      });
+      close();
+      await openClaude(prompt, { project: toProject ? cb.project : null });
+    };
+
+    box.addEventListener('keydown', (e) => {
+      if (e.target.tagName === 'TEXTAREA') return;
+      if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+      if (!box.contains(list)) return;
+      const n = CLAUDE_ACTIONS.findIndex((a) => a.key === e.key);
+      if (n >= 0 && !e.metaKey && !e.ctrlKey) { e.preventDefault(); choose(CLAUDE_ACTIONS[n].id); return; }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); mark(on + (e.key === 'ArrowDown' ? 1 : -1)); rows[on].focus(); }
+    });
+
+    step1();
+    mark(0);
+    setTimeout(() => rows[0].focus());
+  });
+}
+
+async function openClaude(prompt, { project = null } = {}) {
+  const via = S.settings.claudeVia === 'web' ? 'web' : 'app';
+  const tell = (t, where) => toast(t.copy
+    ? `Copied. In ${where}, click the message box and press ⌘V, then send.`
+    : `Opened in ${where}. Review it and press send.`, t.copy ? 6000 : 3200);
+  let t = claudeTarget(prompt, { via, project });
+  try {
+    await invoke('claude_open', { url: t.url, copy: t.copy ? prompt : null });
+    tell(t, via === 'web' ? 'Claude' : 'the Claude app');
+  } catch {
+    if (via === 'web') { toast('Could not open Claude.'); return; }
+    // No Claude app on this Mac: use claude.ai in the browser instead.
+    t = claudeTarget(prompt, { via: 'web', project });
+    try {
+      await invoke('claude_open', { url: t.url, copy: t.copy ? prompt : null });
+      tell(t, 'claude.ai (the Claude app wasn’t found)');
+    } catch { toast('Could not open Claude.'); }
+  }
 }
 
 // ------------------------------------------------------------------ menu bar commands
@@ -1577,6 +1747,7 @@ const ACTIONS = {
   panel: () => togglePanel(),
   goals: () => goalsDialog(),
   shortcuts: () => shortcutsDialog(),
+  'ask-claude': () => askClaude(),
 };
 function runAction(id) {
   if (S.dialogOpen && id !== 'save') return;
@@ -1603,7 +1774,7 @@ document.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   const id = e.key === '.' ? 'focus' : e.key === '1' && !e.altKey ? 'sidebar' : e.key === '2' && !e.altKey ? 'panel'
     : k === 'n' ? (e.shiftKey ? 'new-chapter' : 'new-section') : e.key === ',' ? 'settings'
-    : k === 'o' ? 'quick-open' : k === 'f' && e.shiftKey ? 'find-book' : k === 'p' ? 'export-pdf' : e.key === '/' ? 'shortcuts' : null;
+    : k === 'j' && !e.shiftKey ? 'ask-claude' : k === 'o' ? 'quick-open' : k === 'f' && e.shiftKey ? 'find-book' : k === 'p' ? 'export-pdf' : e.key === '/' ? 'shortcuts' : null;
   if (id) { e.preventDefault(); runAction(id); }
 });
 

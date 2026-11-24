@@ -56,6 +56,7 @@ The text looks formatted while you write: bold is bold and headings are headings
 - **Quick Open (⌘O)** jumps to any section by typing a few letters. **Find (⌘F)** searches the section; **Find in Book (⇧⌘F)** searches and replaces across the whole book (a backup snapshot is taken before replacing).
 - **Pictures**: paste a screenshot (⌘V) or drag a picture into a section. It is saved in the book's `_Images` folder and written as ordinary Markdown (`![](<../_Images/2026.11.24 2115 Screenshot.png>)`), so moving sections between chapters never breaks it. Backspace removes a picture; the file itself stays in `_Images`. Pictures appear in Word and PDF exports.
 - **Links**: ⌘K adds one; ⌘-click a link to open it in your browser.
+- **Ask Claude (⌘J)**: select a passage (or nothing, for the whole section), press ⌘J or the spark at the top right, and pick Critique, Tighten, Find a story, Ask anything or Continue. Claude opens a new chat with the text and request typed in; nothing is sent until you press send. Find a story includes your Reference notes whose titles mention stories or prompts. Notes to self are left out. In Look & Settings you can add a one-line description of the book and its Claude Project link; with a Project, the text is copied for you to paste there (Claude can't prefill a Project chat). Very long passages are copied the same way.
 - **Sidebar width**: drag the sidebar's right edge; double-click it to reset. Each Mac remembers its own width.
 - **Export** (File menu, or the book menu): Word (.docx), PDF (typeset directly, in Georgia on US Letter), or Markdown. Chapters start on new pages; notes to self are left out.
 - **Goals** (View › Writing Goals): a daily word goal with a streak, a target per section, and a goal for the book. Rings at the bottom of the window fill as you write; words count across both Macs.
@@ -70,6 +71,7 @@ The text looks formatted while you write: bold is bold and headings are headings
 | ⇧⌘' | Quote |
 | ⌘K | Link |
 | ⇧⌘K | Note to self |
+| ⌘J | Ask Claude |
 | ⌘\\ | Clear formatting |
 | ⌘O | Quick Open |
 | ⌘F / ⇧⌘F | Find / Find in Book |

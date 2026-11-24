@@ -669,6 +669,8 @@ const barMouse = EditorView.domEventHandlers({
 });
 
 let barActions = {};
+/** A small spark: the Ask Claude mark (deliberately not Claude's logo). */
+export const CLAUDE_ICON = '<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M8 1.2c.3 0 .5.2.6.5l.9 3.3c.1.4.4.7.8.8l3.3.9c.3.1.5.3.5.6s-.2.5-.5.6l-3.3.9c-.4.1-.7.4-.8.8l-.9 3.3c-.1.3-.3.5-.6.5s-.5-.2-.6-.5l-.9-3.3c-.1-.4-.4-.7-.8-.8l-3.3-.9c-.3-.1-.5-.3-.5-.6s.2-.5.5-.6l3.3-.9c.4-.1.7-.4.8-.8l.9-3.3c.1-.3.3-.5.6-.5Z"/></svg>';
 function barDom(view) {
   const dom = document.createElement('div');
   dom.className = 'fmt-bar';
@@ -678,7 +680,7 @@ function barDom(view) {
     b.innerHTML = label;
     b.title = title;
     if (cls) b.className = cls;
-    b.addEventListener('mousedown', (e) => { e.preventDefault(); barActions[action]?.(view); view.dispatch({ effects: showBar.of(!view.state.selection.main.empty) }); });
+    b.addEventListener('mousedown', (e) => { e.preventDefault(); barActions[action]?.(view); view.dispatch({ effects: showBar.of(action !== 'ask' && !view.state.selection.main.empty) }); });
     dom.append(b);
   };
   const sep = () => { const s = document.createElement('span'); s.className = 'sep'; dom.append(s); };
@@ -696,6 +698,8 @@ function barDom(view) {
   sep();
   btn('Link', 'Link (⌘K)', 'link', 'small');
   btn('Note', 'Note to self (⇧⌘K)', 'note', 'small');
+  sep();
+  btn(CLAUDE_ICON, 'Ask Claude (⌘J)', 'ask', 'ask');
   return dom;
 }
 
@@ -747,7 +751,7 @@ export function createEditor(parent, { onChange, extraKeys = [], onLink, onActio
   const focus = new Compartment();
   const tw = new Compartment();
   let focusOn = false, twOn = false, smartOn = true;
-  barActions = { ...COMMANDS, link: () => onLink?.() };
+  barActions = { ...COMMANDS, link: () => onLink?.(), ask: () => onAction?.('ask-claude') };
 
   const shifted = [
     { key: 'Mod-Shift-8', run: COMMANDS.bullets },
@@ -818,6 +822,7 @@ export function createEditor(parent, { onChange, extraKeys = [], onLink, onActio
     },
     text: () => view.state.doc.toString(),
     cursor: () => view.state.selection.main.head,
+    selection() { const { from, to } = view.state.selection.main; return { from, to, text: view.state.sliceDoc(from, to) }; },
     run(name) { const c = COMMANDS[name]; if (!c) return false; view.focus(); return c(view); },
     link(url) { view.focus(); return insertLink(view, url); },
     select(from, to) {
