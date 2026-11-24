@@ -291,7 +291,7 @@ fn read_meta(book_dir: &Path) -> HashMap<String, String> {
         .collect()
 }
 
-fn unique_path(dir: &Path, stem: &str, ext: &str) -> (String, PathBuf) {
+pub(crate) fn unique_path(dir: &Path, stem: &str, ext: &str) -> (String, PathBuf) {
     let mut n = 1;
     loop {
         let name = if n == 1 { format!("{stem}{ext}") } else { format!("{stem} {n}{ext}") };
@@ -462,6 +462,11 @@ pub fn move_item(root: &Path, from_rel: &str, to_dir_rel: &str, index: usize) ->
         let (stem, ext) = if is_file { (name.trim_end_matches(".md").to_string(), ".md") } else { (name.clone(), "") };
         let (n, dest) = unique_path(&to_dir, &stem, ext);
         fs::rename(&from, &dest).map_err(err("Could not move"))?;
+        if is_file {
+            // A section moved to another book takes copies of its pictures along.
+            let text = fs::read_to_string(&dest).unwrap_or_default();
+            crate::images::carry_pictures(root, &from_parent, &to_dir, &text);
+        }
         final_name = n;
         let src_order: Vec<String> = read_lines(&from_parent.join(ORDER)).into_iter().filter(|n| n != &name).collect();
         write_lines(&from_parent.join(ORDER), &src_order)?;
@@ -517,8 +522,9 @@ pub fn export_book(root: &Path, book: &str) -> Res<String> {
     for ch in &b.chapters {
         out.push_str(&format!("## {}\n\n", ch.name));
         for s in &ch.sections {
-            let text = fs::read_to_string(root.join(book).join(&ch.name).join(&s.file)).unwrap_or_default();
-            let clean = strip_notes(&text);
+            let dir = root.join(book).join(&ch.name);
+            let text = fs::read_to_string(dir.join(&s.file)).unwrap_or_default();
+            let clean = crate::images::absolute_pictures(root, &dir, &strip_notes(&text));
             let t = clean.trim();
             if !t.is_empty() {
                 out.push_str(t);

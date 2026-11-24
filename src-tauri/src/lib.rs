@@ -1,4 +1,5 @@
 mod export;
+mod images;
 mod library;
 mod menu;
 
@@ -106,6 +107,18 @@ fn book_export(root_dir: String, book: String) -> Res<String> {
 }
 
 #[tauri::command]
+async fn image_save(root_dir: String, section: String, name: String, data: String) -> Res<String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(data.as_bytes()).map_err(|_| "The picture could not be read.".to_string())?;
+    images::save_image(&root(&root_dir), &section, &name, &bytes)
+}
+
+#[tauri::command]
+async fn image_read(root_dir: String, section: String, src: String) -> Res<String> {
+    images::read_image(&root(&root_dir), &section, &src)
+}
+
+#[tauri::command]
 fn book_export_docx(root_dir: String, book: String, path: String) -> Res<()> {
     export::export_docx(&root(&root_dir), &book, Path::new(&path))
 }
@@ -202,6 +215,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(WatchState::default())
         .invoke_handler(tauri::generate_handler![
             device_name,
@@ -221,6 +235,8 @@ pub fn run() {
             book_export,
             book_export_docx,
             book_export_pdf,
+            image_save,
+            image_read,
             export_write,
             settings_read,
             settings_write,

@@ -54,6 +54,9 @@ The text looks formatted while you write: bold is bold and headings are headings
 - **Notes to self** (⇧⌘K): highlighted comments that are never counted or exported. Return at the end of a note, ⇧⌘K again, or Esc steps back out to normal text. Saved as `<!-- note -->`, which other Markdown apps hide too.
 - **Smart quotes and dashes**: “curly” quotes, `--` becomes —, `...` becomes …. Turn off in Edit › Smart Quotes and Dashes.
 - **Quick Open (⌘O)** jumps to any section by typing a few letters. **Find (⌘F)** searches the section; **Find in Book (⇧⌘F)** searches and replaces across the whole book (a backup snapshot is taken before replacing).
+- **Pictures**: paste a screenshot (⌘V) or drag a picture into a section. It is saved in the book's `_Images` folder and written as ordinary Markdown (`![](<../_Images/2026.11.24 2115 Screenshot.png>)`), so moving sections between chapters never breaks it. Backspace removes a picture; the file itself stays in `_Images`. Pictures appear in Word and PDF exports.
+- **Links**: ⌘K adds one; ⌘-click a link to open it in your browser.
+- **Sidebar width**: drag the sidebar's right edge; double-click it to reset. Each Mac remembers its own width.
 - **Export** (File menu, or the book menu): Word (.docx), PDF (typeset directly, in Georgia on US Letter), or Markdown. Chapters start on new pages; notes to self are left out.
 - **Goals** (View › Writing Goals): a daily word goal with a streak, a target per section, and a goal for the book. Rings at the bottom of the window fill as you write; words count across both Macs.
 

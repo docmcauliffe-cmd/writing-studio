@@ -23,6 +23,7 @@ import { homeDir } from '@tauri-apps/api/path';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { check as checkUpdate } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { getVersion } from '@tauri-apps/api/app';
 import { createEditor } from './editor.js';
 import { lineDiff, wordCount, formatCount, stamp, snapshotDue, otherDeviceOn, dropIndex, minutesAgo } from './logic.js';
@@ -215,7 +216,9 @@ async function start() {
     S.settings = { ...DEFAULTS, ...S.settings, ...shared };
   } catch { /* keep local */ }
   applySettings();
+  setSideWidth(store.get('ws-sidebar', null), false);
   shell();
+  if (import.meta.env.DEV) window.__editor = editor; // for the browser preview's tests
   await refresh();
   const last = store.get('ws-last-' + S.book);
   const first = firstSection();
@@ -230,10 +233,83 @@ async function start() {
 
 // ------------------------------------------------------------------ layout
 
+// The sidebar's width is per Mac (screens differ), so it lives in this Mac's storage.
+const SIDE_DEFAULT = 268, SIDE_MIN = 200, SIDE_MAX = 560;
+function setSideWidth(w, save = true) {
+  const v = w == null ? SIDE_DEFAULT : Math.round(Math.max(SIDE_MIN, Math.min(SIDE_MAX, w)));
+  document.documentElement.style.setProperty('--sidebar', v + 'px');
+  if (save) w == null ? store.del('ws-sidebar') : store.set('ws-sidebar', v);
+}
+function startSideResize(e) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const side = e.currentTarget.parentElement;
+  const left = side.getBoundingClientRect().left;
+  document.body.classList.add('resizing');
+  const move = (ev) => setSideWidth(ev.clientX - left, false);
+  const up = (ev) => {
+    removeEventListener('pointermove', move);
+    removeEventListener('pointerup', up);
+    document.body.classList.remove('resizing');
+    setSideWidth(ev.clientX - left);
+  };
+  addEventListener('pointermove', move);
+  addEventListener('pointerup', up);
+}
+
+// ------------------------------------------------------------------ pictures and links
+
+const pictureCache = new Map();
+/** The editor asks for a picture by the path written in the section; answer with its data. */
+function pictureSrc(src) {
+  const rel = S.current?.rel;
+  if (!rel) return Promise.reject(new Error('No section'));
+  const key = rel + '|' + src;
+  if (!pictureCache.has(key)) {
+    const p = call('image_read', { section: rel, src });
+    p.catch(() => pictureCache.delete(key));
+    pictureCache.set(key, p);
+  }
+  return pictureCache.get(key);
+}
+
+const readBase64 = (file) => new Promise((ok, fail) => {
+  const r = new FileReader();
+  r.onload = () => ok(String(r.result).split(',')[1] || '');
+  r.onerror = () => fail(r.error);
+  r.readAsDataURL(file);
+});
+
+/** Save a pasted or dropped picture into the book's _Images folder; returns the path to write. */
+async function savePicture(file) {
+  const cur = S.current;
+  if (!cur) throw new Error('No section');
+  if (cur.inbox) { toast('File this note into a chapter first, then add pictures to it.'); throw new Error('inbox'); }
+  if (file.size > 25 * 1024 * 1024) { toast('That picture is over 25 MB. Try a smaller one.'); throw new Error('too big'); }
+  const ext = ({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/heic': 'heic' })[file.type] || 'png';
+  const given = (file.name || '').replace(/\.[^.]+$/, '').trim();
+  const label = !given || /^image$/i.test(given) ? 'Screenshot' : given;
+  const name = `${stamp().slice(0, 15).replace(/-/g, '.')} ${label}.${ext}`;
+  try {
+    const data = await readBase64(file);
+    return await call('image_save', { section: cur.rel, name, data });
+  } catch (e) {
+    toast(String(e), 6000);
+    throw e;
+  }
+}
+
+function openExternal(url) {
+  const u = /^[a-z][\w+.-]*:/i.test(url) ? url : 'https://' + url;
+  if (!/^(https?|mailto):/i.test(u)) { toast('Only web and email links can be opened.'); return; }
+  openUrl(u).catch(() => toast('Could not open the link.'));
+}
+
 function shell() {
   const app = $('#app');
   app.replaceChildren(
     h('aside', { class: 'side', 'aria-label': 'Library' },
+      h('div', { class: 'side-resize', title: 'Drag to resize · double-click to reset', onpointerdown: startSideResize, ondblclick: () => setSideWidth(null) }),
       h('div', { class: 'drag', 'data-tauri-drag-region': true }),
       h('div', { class: 'side-scroll', id: 'side' }),
       h('div', { class: 'side-foot' },
@@ -255,6 +331,9 @@ function shell() {
     onChange,
     onLink: linkDialog,
     onAction: (id) => runAction(id),
+    onImage: savePicture,
+    imageSrc: pictureSrc,
+    onOpenLink: openExternal,
     extraKeys: [
       { key: 'Mod-s', run: () => { flushSave(); return true; } },
     ],
@@ -1463,6 +1542,7 @@ function shortcutsDialog() {
     ['Focus mode / Sidebar / Reference panel', '⌘.  ⌘1  ⌘2'],
     ['New section / New chapter', '⌘N  ⇧⌘N'],
     ['Export to PDF', '⌘P'],
+    ['Open a link', '⌘-click'],
   ];
   dialog((box, close) => {
     box.append(

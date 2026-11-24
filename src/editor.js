@@ -97,6 +97,36 @@ class NoteWidget extends WidgetType {
   toDOM() { const s = document.createElement('span'); s.className = 'cm-note-tag'; s.textContent = 'Note'; return s; }
 }
 
+// ---------------------------------------------------------------- pictures and links
+
+let imageSource = null; // (src) => Promise<data URL>, set by createEditor
+let openLink = null;    // (url) => void
+
+const nodeUrl = (state, node) => {
+  for (let c = node.firstChild; c; c = c.nextSibling) {
+    if (c.name === 'URL') return state.sliceDoc(c.from, c.to).replace(/^<|>$/g, '');
+  }
+  return null;
+};
+
+class ImageWidget extends WidgetType {
+  constructor(src) { super(); this.src = src; }
+  eq(o) { return o.src === this.src; }
+  toDOM(view) {
+    const box = document.createElement('span');
+    box.className = 'cm-pic';
+    const img = document.createElement('img');
+    img.alt = '';
+    img.draggable = false;
+    box.append(img);
+    Promise.resolve(imageSource?.(this.src))
+      .then((url) => { if (!url) throw new Error(); img.onload = () => view.requestMeasure(); img.src = url; })
+      .catch(() => { box.classList.add('missing'); box.textContent = 'Picture not found: ' + decodeURIComponent(this.src.split('/').pop()); });
+    return box;
+  }
+  ignoreEvent() { return false; }
+}
+
 const hide = Decoration.replace({});
 const noteTag = Decoration.replace({ widget: new NoteWidget() });
 const noteMark = Decoration.mark({ class: 'cm-note' });
@@ -162,6 +192,13 @@ function buildLive(view) {
         const name = node.name;
         if (name === 'EmphasisMark' || name === 'StrikethroughMark') add(hide, node.from, node.to);
         else if (name === 'CodeMark' && node.node.parent?.name === 'InlineCode') add(hide, node.from, node.to);
+        else if (name === 'Image') {
+          // Show the picture itself, unless the caret is inside its Markdown to edit it.
+          if (sel.from > node.from && sel.to < node.to) return false;
+          const src = nodeUrl(state, node.node);
+          if (src) add(Decoration.replace({ widget: new ImageWidget(src) }), node.from, node.to);
+          return false;
+        }
         else if (name === 'Link') {
           // Show only the link text, unless the caret is inside the link to edit it.
           if (sel.from <= node.to && sel.to >= node.from) return false;
@@ -170,7 +207,8 @@ function buildLive(view) {
           if (marks.length >= 2 && marks[0].to <= marks[1].from) {
             add(hide, marks[0].from, marks[0].to);
             add(hide, marks[1].from, node.to);
-            decos.push(Decoration.mark({ class: 'cm-link' }).range(marks[0].to, marks[1].from));
+            const url = nodeUrl(state, node.node) || '';
+            decos.push(Decoration.mark({ class: 'cm-link', attributes: { title: `${url}\n⌘-click to open` } }).range(marks[0].to, marks[1].from));
           }
           return false;
         }
@@ -226,6 +264,65 @@ const caretGuard = EditorState.transactionFilter.of((tr) => {
 });
 
 // ---------------------------------------------------------------- typing and deleting
+
+/** Backspace just after a picture (or Delete just before it) removes the whole picture. */
+function deletePicture(forward) {
+  return (view) => {
+    const r = view.state.selection.main;
+    if (!r.empty) return false;
+    let hit = null;
+    syntaxTree(view.state).iterate({
+      from: r.head - 1, to: r.head + 1,
+      enter(n) { if (n.name === 'Image' && (forward ? n.from === r.head : n.to === r.head)) hit = { from: n.from, to: n.to }; },
+    });
+    if (!hit) return false;
+    view.dispatch({ changes: hit, selection: { anchor: hit.from }, userEvent: 'delete' });
+    return true;
+  };
+}
+
+function linkAt(state, pos) {
+  for (let n = syntaxTree(state).resolveInner(pos, 1); n; n = n.parent) {
+    if (n.name === 'Link' || n.name === 'URL' || n.name === 'Autolink') {
+      const link = n.name === 'URL' ? n.parent : n;
+      const url = link && (nodeUrl(state, link) || (n.name === 'URL' ? state.sliceDoc(n.from, n.to) : null));
+      if (url) return url;
+    }
+  }
+  return null;
+}
+
+const linkClicks = EditorView.domEventHandlers({
+  mousedown(e, view) {
+    if (!(e.metaKey || e.ctrlKey) || e.button !== 0) return false;
+    const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
+    const url = pos != null && linkAt(view.state, pos);
+    if (!url) return false;
+    e.preventDefault();
+    openLink?.(url);
+    return true;
+  },
+});
+
+/** Put pictures on their own lines at `pos`. `save(file)` stores one and returns its path. */
+async function insertPictures(view, files, pos, save) {
+  for (const file of files) {
+    let src;
+    try { src = await save(file); } catch { return; }
+    if (!src) return;
+    const doc = view.state.doc;
+    pos = Math.min(pos, doc.length);
+    const line = doc.lineAt(pos);
+    const before = pos > line.from ? (doc.sliceString(pos - 1, pos) === '\n' ? '' : '\n\n') : pos > 0 && doc.sliceString(pos - 2, pos) !== '\n\n' ? '\n' : '';
+    const after = pos < line.to ? '\n\n' : '\n';
+    const insert = `${before}![](<${src}>)${after}`;
+    view.dispatch({ changes: { from: pos, insert }, selection: { anchor: pos + insert.length }, scrollIntoView: true, userEvent: 'input.paste' });
+    pos += insert.length;
+  }
+  view.focus();
+}
+
+const pictureFiles = (list) => [...(list || [])].filter((f) => f.type.startsWith('image/'));
 
 const PAIRS = [['**', '**'], ['__', '__'], ['~~', '~~'], ['*', '*'], ['_', '_'], ['`', '`'], ['<!-- ', ' -->'], ['<!--', '-->']];
 
@@ -595,7 +692,32 @@ export const COMMANDS = {
   find: (view) => openSearchPanel(view),
 };
 
-export function createEditor(parent, { onChange, extraKeys = [], onLink, onAction }) {
+export function createEditor(parent, { onChange, extraKeys = [], onLink, onAction, onImage, imageSrc, onOpenLink }) {
+  imageSource = imageSrc || null;
+  openLink = onOpenLink || null;
+  const pictureDrops = EditorView.domEventHandlers({
+    paste(e, view) {
+      const files = pictureFiles(e.clipboardData?.files);
+      if (!files.length || !onImage) return false;
+      e.preventDefault();
+      insertPictures(view, files, view.state.selection.main.head, onImage);
+      return true;
+    },
+    dragover(e) {
+      if (!onImage || ![...(e.dataTransfer?.types || [])].includes('Files')) return false;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      return true;
+    },
+    drop(e, view) {
+      const files = pictureFiles(e.dataTransfer?.files);
+      if (!files.length || !onImage) return false;
+      e.preventDefault();
+      const pos = view.posAtCoords({ x: e.clientX, y: e.clientY }) ?? view.state.selection.main.head;
+      insertPictures(view, files, pos, onImage);
+      return true;
+    },
+  });
   const focus = new Compartment();
   const tw = new Compartment();
   let focusOn = false, twOn = false, smartOn = true;
@@ -643,9 +765,11 @@ export function createEditor(parent, { onChange, extraKeys = [], onLink, onActio
     tidyPairs,
     barField,
     barMouse,
+    linkClicks,
+    pictureDrops,
     search({ top: true }),
     placeholder('Start writing…'),
-    Prec.highest(keymap.of([{ key: 'Backspace', run: deleteBy(false) }, { key: 'Delete', run: deleteBy(true) }, { key: 'Enter', run: exitNote(true) }, { key: 'Enter', run: endEmptyQuote }, { key: 'Escape', run: exitNote(false) }, ...shifted])),
+    Prec.highest(keymap.of([{ key: 'Backspace', run: deletePicture(false) }, { key: 'Delete', run: deletePicture(true) }, { key: 'Backspace', run: deleteBy(false) }, { key: 'Delete', run: deleteBy(true) }, { key: 'Enter', run: exitNote(true) }, { key: 'Enter', run: endEmptyQuote }, { key: 'Escape', run: exitNote(false) }, ...shifted])),
     keymap.of([...keys, ...extraKeys, ...searchKeymap, ...defaultKeymap, ...historyKeymap]),
     focus.of(focusOn ? focusPlugin : []),
     tw.of(twOn ? typewriter() : []),

@@ -1,6 +1,6 @@
 [package]
 name = "writing-studio"
-version = "0.3.2"
+version = "0.4.0"
 description = "A calm Markdown writing app for books"
 edition = "2021"
 
@@ -25,7 +25,10 @@ chrono = "0.4"
 hostname = "0.4"
 dirs = "5"
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
-genpdf = "0.2"
+genpdf = { version = "0.2", features = ["images"] }
+base64 = "0.22"
+image = { version = "0.23", default-features = false, features = ["png", "jpeg", "gif"] }
+tauri-plugin-opener = "2"
 
 [dev-dependencies]
 muda = "0.20.0"

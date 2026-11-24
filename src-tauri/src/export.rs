@@ -8,11 +8,45 @@ use crate::library::{atomic_write, list_library, strip_notes, Res};
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub struct Part {
     pub chapter: String,
     pub sections: Vec<String>,
+    /// The chapter's folder, for finding the pictures its sections use.
+    pub dir: PathBuf,
+}
+
+/// A picture a section uses, read from the book's `_Images` folder.
+struct Picture {
+    bytes: Vec<u8>,
+    ext: &'static str,
+    w: u32,
+    h: u32,
+}
+
+fn load_picture(dir: &Path, src: &str) -> Option<Picture> {
+    let root = dir.ancestors().nth(2)?;
+    let path = crate::images::picture_file(root, dir, src)?;
+    let bytes = fs::read(&path).ok()?;
+    let ext = match path.extension()?.to_str()?.to_lowercase().as_str() {
+        "png" => "png",
+        "jpg" | "jpeg" => "jpeg",
+        "gif" => "gif",
+        _ => return None,
+    };
+    let (w, h) = image::load_from_memory(&bytes).ok().map(|i| image::GenericImageView::dimensions(&i))?;
+    Some(Picture { bytes, ext, w, h })
+}
+
+/// Screenshots on a Mac are taken at twice the screen's resolution, so show them at 144 pixels
+/// per inch, shrunk further when they would not fit. Returns (width, height) in inches.
+fn picture_inches(p: &Picture, max_w: f64, max_h: f64) -> (f64, f64) {
+    let (mut w, mut h) = (p.w as f64 / 144.0, p.h as f64 / 144.0);
+    let k = (max_w / w).min(max_h / h).min(1.0);
+    w *= k;
+    h *= k;
+    (w, h)
 }
 
 /// The book's title and the text of every section, chapter by chapter.
@@ -24,6 +58,7 @@ pub fn book_parts(root: &Path, book: &str) -> Res<(String, Vec<Part>)> {
         .iter()
         .map(|ch| Part {
             chapter: ch.name.clone(),
+            dir: root.join(book).join(&ch.name),
             sections: ch
                 .sections
                 .iter()
@@ -89,11 +124,37 @@ struct Docx {
     ordered_nums: Vec<u64>, // start value for each ordered list instance (numId = 2 + index)
     quote: usize,
     in_code: bool,
+    in_image: bool,
+    dir: PathBuf,
+    media: Vec<(String, Vec<u8>)>,
 }
 
 impl Docx {
     fn new() -> Self {
-        Docx { body: String::new(), para_open: false, para_style: None, pending_num: None, fmt: Fmt::default(), lists: vec![], ordered_nums: vec![], quote: 0, in_code: false }
+        Docx { body: String::new(), para_open: false, para_style: None, pending_num: None, fmt: Fmt::default(), lists: vec![], ordered_nums: vec![], quote: 0, in_code: false, in_image: false, dir: PathBuf::new(), media: vec![] }
+    }
+
+    fn picture(&mut self, src: &str) {
+        let Some(p) = load_picture(&self.dir, src) else {
+            self.run("[picture]");
+            return;
+        };
+        // A picture on its own line is centred, without the paragraph indent.
+        const BODY_OPEN: &str = r#"<w:p><w:pPr><w:pStyle w:val="BodyText"/></w:pPr>"#;
+        if self.body.ends_with(BODY_OPEN) {
+            let cut = self.body.len() - BODY_OPEN.len();
+            self.body.truncate(cut);
+            self.body.push_str(r#"<w:p><w:pPr><w:pStyle w:val="Figure"/></w:pPr>"#);
+        }
+        self.open_para();
+        let n = self.media.len() + 1;
+        let target = format!("image{n}.{}", p.ext);
+        let (w, h) = picture_inches(&p, 6.0, 8.0);
+        let (cx, cy) = ((w * 914400.0) as u64, (h * 914400.0) as u64);
+        self.body.push_str(&format!(
+            r#"<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="{cx}" cy="{cy}"/><wp:docPr id="{n}" name="Picture {n}"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="{n}" name="{target}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rIdImg{n}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#
+        ));
+        self.media.push((target, p.bytes));
     }
 
     fn open_para(&mut self) {
@@ -241,6 +302,12 @@ impl Docx {
                     self.run(&t);
                     self.fmt.code = false;
                 }
+                Event::Start(Tag::Image { dest_url, .. }) => {
+                    self.picture(&dest_url);
+                    self.in_image = true;
+                }
+                Event::End(TagEnd::Image) => self.in_image = false,
+                Event::Text(_) if self.in_image => {}
                 Event::Text(t) => self.run(&t),
                 Event::SoftBreak => self.run(" "),
                 Event::HardBreak => self.run("\n"),
@@ -274,6 +341,7 @@ const STYLES: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:before="120" w:after="120"/><w:ind w:left="720" w:right="720"/></w:pPr><w:rPr><w:i/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:qFormat/></w:style>
 <w:style w:type="paragraph" w:styleId="Code"><w:name w:val="Code"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:line="240" w:lineRule="auto" w:before="120" w:after="120"/><w:ind w:left="360"/></w:pPr><w:rPr><w:rFonts w:ascii="Menlo" w:hAnsi="Menlo"/><w:sz w:val="19"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Figure"><w:name w:val="Figure"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="240" w:after="240" w:line="240" w:lineRule="auto"/><w:jc w:val="center"/></w:pPr></w:style>
 <w:style w:type="paragraph" w:styleId="SceneBreak"><w:name w:val="Scene Break"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="240" w:after="240"/><w:jc w:val="center"/></w:pPr></w:style>
 </w:styles>"#;
 
@@ -317,27 +385,37 @@ pub fn docx_bytes(title: &str, parts: &[Part]) -> Res<Vec<u8>> {
             if i > 0 && !starts_with_heading(s) {
                 d.styled_para("SceneBreak", "* * *");
             }
+            d.dir = p.dir.clone();
             d.feed(shifted(s));
         }
     }
     let document = format!(
-        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr></w:body></w:document>"#,
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><w:body>{}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr></w:body></w:document>"#,
         d.body
     );
     let mut buf = std::io::Cursor::new(Vec::new());
     {
         let mut z = zip::ZipWriter::new(&mut buf);
         let o = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        let pic_rels: String = d.media.iter().enumerate().map(|(i, (t, _))| format!(r#"<Relationship Id="rIdImg{}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/{t}"/>"#, i + 1)).collect();
+        let content_types = CONTENT_TYPES.replace(
+            r#"<Default Extension="xml" ContentType="application/xml"/>"#,
+            r#"<Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Default Extension="jpeg" ContentType="image/jpeg"/><Default Extension="gif" ContentType="image/gif"/>"#,
+        );
         for (name, body) in [
-            ("[Content_Types].xml", CONTENT_TYPES.to_string()),
+            ("[Content_Types].xml", content_types),
             ("_rels/.rels", RELS.to_string()),
-            ("word/_rels/document.xml.rels", DOC_RELS.to_string()),
+            ("word/_rels/document.xml.rels", DOC_RELS.replace("</Relationships>", &format!("{pic_rels}</Relationships>"))),
             ("word/document.xml", document),
             ("word/styles.xml", STYLES.to_string()),
             ("word/numbering.xml", numbering(&d.ordered_nums)),
         ] {
             z.start_file(name, o).map_err(|e| format!("Could not build the Word file: {e}"))?;
             z.write_all(body.as_bytes()).map_err(|e| format!("Could not build the Word file: {e}"))?;
+        }
+        for (t, bytes) in &d.media {
+            z.start_file(format!("word/media/{t}"), o).map_err(|e| format!("Could not build the Word file: {e}"))?;
+            z.write_all(bytes).map_err(|e| format!("Could not build the Word file: {e}"))?;
         }
         z.finish().map_err(|e| format!("Could not build the Word file: {e}"))?;
     }
@@ -411,6 +489,8 @@ struct Pdf {
     space_after: f64,
     align: Alignment,
     boxes: (&'static str, &'static str),
+    in_image: bool,
+    dir: PathBuf,
 }
 
 impl Pdf {
@@ -454,6 +534,29 @@ impl Pdf {
         let mut p = Paragraph::default();
         p.push_styled(text.to_string(), style);
         self.doc.push(p.aligned(align).padded(Margins::trbl(0, 0, after, 0)));
+    }
+
+    fn picture(&mut self, src: &str) {
+        self.flush();
+        let pic = load_picture(&self.dir, src).and_then(|p| {
+            let img = image::load_from_memory(&p.bytes).ok()?;
+            // Flatten any transparency onto white paper.
+            let rgba = img.to_rgba8();
+            let mut rgb = image::RgbImage::new(rgba.width(), rgba.height());
+            for (x, y, px) in rgba.enumerate_pixels() {
+                let a = px[3] as u32;
+                let mix = |c: u8| ((c as u32 * a + 255 * (255 - a)) / 255) as u8;
+                rgb.put_pixel(x, y, image::Rgb([mix(px[0]), mix(px[1]), mix(px[2])]));
+            }
+            let indent = INDENT_MM * (self.lists.len() as f64 + 1.5 * self.quote as f64);
+            let (w, _) = picture_inches(&p, (165.0 - indent) / 25.4, 200.0 / 25.4);
+            let dpi = p.w as f64 / w;
+            genpdf::elements::Image::from_dynamic_image(image::DynamicImage::ImageRgb8(rgb)).ok().map(|i| i.with_dpi(dpi).with_alignment(Alignment::Center))
+        });
+        match pic {
+            Some(i) => self.doc.push(i.padded(Margins::trbl(2, 0, 4, 0))),
+            None => self.text("[picture]"),
+        }
     }
 
     fn scene_break(&mut self) {
@@ -534,6 +637,12 @@ impl Pdf {
                 Event::Start(Tag::Strong) => self.bold += 1,
                 Event::End(TagEnd::Strong) => self.bold = self.bold.saturating_sub(1),
                 Event::Code(t) => self.text(&t),
+                Event::Start(Tag::Image { dest_url, .. }) => {
+                    self.picture(&dest_url);
+                    self.in_image = true;
+                }
+                Event::End(TagEnd::Image) => self.in_image = false,
+                Event::Text(_) if self.in_image => {}
                 Event::Text(t) => {
                     if self.in_code {
                         for line in t.lines() {
@@ -583,7 +692,7 @@ pub fn pdf_bytes(title: &str, parts: &[Part]) -> Res<Vec<u8>> {
     let has = |c: &str| font.glyph_ids(doc.font_cache(), c.chars()).iter().all(|g| *g != 0);
     let boxes = if has("☐☑") { ("☐", "☑") } else if has("○●") { ("○", "●") } else { ("[ ]", "[x]") };
 
-    let mut pdf = Pdf { doc, para: None, block: Style::new(), bold: 0, italic: 0, lists: vec![], prefix: None, quote: 0, in_code: false, space_after: 3.0, align: Alignment::Left, boxes };
+    let mut pdf = Pdf { doc, para: None, block: Style::new(), bold: 0, italic: 0, lists: vec![], prefix: None, quote: 0, in_code: false, space_after: 3.0, align: Alignment::Left, boxes, in_image: false, dir: PathBuf::new() };
     pdf.doc.push(Break::new(12));
     pdf.block_para(title, Style::new().with_font_size(28), Alignment::Center, 0.0, 0.0);
     for p in parts {
@@ -594,6 +703,7 @@ pub fn pdf_bytes(title: &str, parts: &[Part]) -> Res<Vec<u8>> {
             if i > 0 && !starts_with_heading(s) {
                 pdf.scene_break();
             }
+            pdf.dir = p.dir.clone();
             pdf.feed(shifted(s));
         }
     }
@@ -611,16 +721,29 @@ pub fn export_pdf(root: &Path, book: &str, out: &Path) -> Res<()> {
 mod tests {
     use super::*;
 
+    /// A library folder with one chapter and a 600x300 screenshot-like picture.
+    fn picture_library() -> (tempfile::TempDir, PathBuf) {
+        let d = tempfile::tempdir().unwrap();
+        let ch = d.path().join("Bk/One");
+        fs::create_dir_all(&ch).unwrap();
+        fs::create_dir_all(d.path().join("Bk/_Images")).unwrap();
+        let img = image::RgbaImage::from_fn(600, 300, |x, y| image::Rgba([(x % 255) as u8, (y % 255) as u8, 160, if x < 30 { 0 } else { 255 }]));
+        image::DynamicImage::ImageRgba8(img).save(d.path().join("Bk/_Images/shot one.png")).unwrap();
+        (d, ch)
+    }
+
     #[test]
     fn word_export_has_styles_lists_and_no_notes() {
+        let (_tmp, dir) = picture_library();
         let parts = vec![Part {
             chapter: "One & Two".into(),
+            dir,
             sections: vec![
-                "# Opening\n\nA **bold** and *quiet* start.<!-- fix later -->\n\n- first\n- [x] done\n\n1. a\n2. b".into(),
+                "# Opening\n\nA **bold** and *quiet* start.<!-- fix later -->\n\n![a screenshot](<../_Images/shot one.png>)\n\n- first\n- [x] done\n\n1. a\n2. b".into(),
                 "Second scene.\n\n> A quote".into(),
             ],
         }];
-        let parts: Vec<Part> = parts.into_iter().map(|p| Part { chapter: p.chapter, sections: p.sections.iter().map(|s| strip_notes(s)).collect() }).collect();
+        let parts: Vec<Part> = parts.into_iter().map(|p| Part { chapter: p.chapter, sections: p.sections.iter().map(|s| strip_notes(s)).collect(), dir: p.dir }).collect();
         let bytes = docx_bytes("My Book", &parts).unwrap();
         if let Ok(out) = std::env::var("WS_DOCX_OUT") {
             fs::write(out, &bytes).unwrap();
@@ -637,19 +760,24 @@ mod tests {
         assert!(doc.contains(r#"<w:pStyle w:val="Quote"/>"#));
         assert!(!doc.contains("fix later"));
         assert!(z.by_name("word/numbering.xml").is_ok());
+        assert!(z.by_name("word/media/image1.png").is_ok(), "the picture is embedded");
+        assert!(doc.contains(r#"r:embed="rIdImg1""#) && doc.contains(r#"<w:pStyle w:val="Figure"/>"#));
+        assert!(!doc.contains("a screenshot"), "alt text is not printed");
     }
 
     #[test]
     fn pdf_export_renders_pages() {
+        let (_tmp, dir) = picture_library();
         let parts = vec![
             Part {
                 chapter: "One & Two".into(),
+                dir,
                 sections: vec![
-                    "# Opening\n\nA **bold** and *quiet* start, with “quotes” — and a dash. ".repeat(1) + &"A longer paragraph that keeps going so it wraps across several lines of the page and shows the spacing. ".repeat(12) + "\n\n- first\n- [x] done\n- [ ] open\n  - nested\n\n1. a\n2. b\n\n> A quote that is long enough to wrap onto a second line inside the margins of the page.",
+                    "![](<../_Images/shot one.png>)\n\n# Opening\n\nA **bold** and *quiet* start, with “quotes” — and a dash. ".repeat(1) + &"A longer paragraph that keeps going so it wraps across several lines of the page and shows the spacing. ".repeat(12) + "\n\n- first\n- [x] done\n- [ ] open\n  - nested\n\n1. a\n2. b\n\n> A quote that is long enough to wrap onto a second line inside the margins of the page.",
                     "Second scene.\n\n---\n\nAfter a rule.".into(),
                 ],
             },
-            Part { chapter: "Three".into(), sections: vec!["Last words.".into()] },
+            Part { chapter: "Three".into(), sections: vec!["Last words.".into()], dir: PathBuf::new() },
         ];
         let bytes = pdf_bytes("My Book", &parts).unwrap();
         if let Ok(out) = std::env::var("WS_PDF_OUT") {

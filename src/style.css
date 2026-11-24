@@ -49,7 +49,12 @@ body.focus-mode .topbar, body.focus-mode .foot { opacity: 0; transition: opacity
 body.focus-mode .topbar:hover, body.focus-mode .foot:hover { opacity: 1; }
 
 /* ---------- sidebar ---------- */
-.side { background: var(--side); border-right: 1px solid var(--rule); display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.side-resize { position: absolute; top: 0; right: 0; width: 6px; height: 100%; cursor: col-resize; z-index: 5; }
+.side-resize::after { content: ''; position: absolute; top: 0; bottom: 0; left: 5px; width: 1px; background: transparent; transition: background .15s; }
+.side-resize:hover::after, body.resizing .side-resize::after { background: var(--hl); }
+body.resizing, body.resizing * { cursor: col-resize !important; user-select: none !important; }
+body.resizing #app { transition: none; }
+.side { position: relative; background: var(--side); border-right: 1px solid var(--rule); display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
 .drag { height: 38px; flex: none; -webkit-app-region: drag; }
 .side-scroll { overflow: auto; flex: 1; padding: 0 10px 12px; }
 .label { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--dim); font-weight: 600; margin: 14px 8px 6px; display: flex; justify-content: space-between; align-items: center; }
@@ -140,6 +145,9 @@ body.with-ref .ref-panel { display: flex; }
 .cm-check.on::after { content: ''; position: absolute; left: 28%; top: 6%; width: 28%; height: 55%; border: solid var(--bg); border-width: 0 2px 2px 0; transform: rotate(45deg); }
 .cm-done { color: var(--dim); text-decoration: line-through; text-decoration-color: var(--mark); }
 .cm-h { padding-top: .35em !important; }
+.cm-pic { display: block; margin: .4em 0; line-height: 0; }
+.cm-pic img { display: block; max-width: 100%; max-height: 70vh; border-radius: 6px; box-shadow: 0 1px 6px var(--shadow); }
+.cm-pic.missing { line-height: 1.4; font-size: .8em; color: var(--dim); font-style: italic; }
 .cm-quote { border-left: 3px solid var(--rule); padding-left: 1em !important; color: color-mix(in srgb, var(--text) 78%, var(--bg)); font-style: italic; }
 .cm-link { color: var(--hl); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--hl) 40%, transparent); text-underline-offset: 3px; }
 .cm-note { background: color-mix(in srgb, var(--hl) 12%, transparent); color: color-mix(in srgb, var(--text) 80%, var(--hl)); border-radius: 3px; padding: 1px 0; font-size: .86em; }
