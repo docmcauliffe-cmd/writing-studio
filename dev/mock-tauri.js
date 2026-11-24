@@ -70,16 +70,22 @@ const cmds = {
   item_trash: ({ rel }) => { moveTree(rel, 'Writing Studio - Trash/' + rel.replaceAll('/', ' - ')); return 'x'; },
   book_meta_set: ({ book, goal }) => { files.set(book + '/_book.txt', `Title: ${book}\nGoal: ${goal || ''}\n`); },
   book_export: () => '# Book',
+  book_export_docx: () => null,
+  book_export_html: () => '<header class="pr-title"><h1>The Bench</h1></header><section class="pr-chapter"><h1>Why succession fails</h1><h2>The empty chair</h2><p>The meeting began.</p></section>',
+  print_window: () => { window.__printed = (window.__printed || 0) + 1; return null; },
+  progress_read: () => window.__progress || { 'MacBook Pro': { [new Date().toISOString().slice(0, 10)]: 120 } },
+  progress_write: ({ device, days }) => { window.__progressWritten = { device, days }; },
   export_write: () => null,
   snapshot_take: () => '2026.11.23 1400 - iMac.zip',
   snapshot_list: () => [{ file: '2026.11.23 1400 - iMac.zip', when: 'Mon Nov 23, 2026 at 2:00 PM', device: 'iMac', bytes: 2048 }],
   snapshot_restore: () => 'The Bench',
-  'plugin:event|listen': () => 1,
+  'plugin:event|listen': ({ event, handler }) => { (window.__listeners ||= {})[event] = handler; return 1; },
   'plugin:updater|check': () => (window.__mockUpdate ? { rid: 1, currentVersion: '0.1.1', version: '0.2.0', date: null, body: '', rawJson: {} } : null),
   'plugin:app|version': () => '0.1.1',
   'plugin:event|unlisten': () => null,
 };
 window.__mockFiles = files;
+window.__menu = (id) => window['_' + window.__listeners.menu]({ event: 'menu', id: 1, payload: id });
 window.__TAURI_INTERNALS__ = {
   metadata: { currentWindow: { label: 'main' }, currentWebview: { windowLabel: 'main', label: 'main' } },
   transformCallback: (cb) => { const id = Math.random() * 1e9 | 0; window['_' + id] = cb; return id; },

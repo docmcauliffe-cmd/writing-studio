@@ -38,6 +38,7 @@ export function lineDiff(a, b) {
 }
 
 export function wordCount(text) {
+  text = text.replace(/<!--[\s\S]*?(-->|$)/g, ''); // notes to self don't count
   return (text.match(/\S+/g) || []).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
 }
 

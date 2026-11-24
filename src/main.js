@@ -37,7 +37,7 @@ const FONTS = {
   mono: { name: 'Plex Mono', css: '"IBM Plex Mono", ui-monospace, Menlo, monospace' },
 };
 const LOOKS = { sepia: 'Sepia', paper: 'Paper', studio: 'Studio', night: 'Night' };
-const DEFAULTS = { look: 'sepia', font: 'plex', size: 19, measure: 34, typewriter: false };
+const DEFAULTS = { look: 'sepia', font: 'plex', size: 19, measure: 34, typewriter: false, smart: true, dailyGoal: null, targets: {} };
 
 // ------------------------------------------------------------------ small helpers
 
@@ -166,6 +166,7 @@ function applySettings() {
   r.setProperty('--measure', s.measure + 'em');
   r.setProperty('--lh', s.font === 'mono' ? '1.7' : '1.65');
   editor?.setTypewriter(!!s.typewriter);
+  editor?.setSmartTyping(s.smart !== false);
 }
 
 let settingsTimer = null;
@@ -223,6 +224,7 @@ async function start() {
   else showEmptyMain();
   const lastPanel = store.get('ws-panel');
   if (lastPanel && findSection(lastPanel)) openPanel(lastPanel);
+  loadProgress();
   try { await call('watch_start'); } catch (e) { toast(String(e)); }
 }
 
@@ -251,6 +253,8 @@ function shell() {
   );
   editor = createEditor($('#editor-host'), {
     onChange,
+    onLink: linkDialog,
+    onAction: (id) => runAction(id),
     extraKeys: [
       { key: 'Mod-s', run: () => { flushSave(); return true; } },
     ],
@@ -484,6 +488,7 @@ async function moveItem(fromRel, toDir, index) {
   if (isCurrent) await flushSave();
   try {
     const newRel = await call('item_move', { from: fromRel, toDir, index });
+    remapTargets(fromRel, newRel);
     if (isCurrent) setCurrentRel(newRel);
   } catch (e) { toast(String(e)); }
   await refresh();
@@ -566,6 +571,7 @@ async function renameItem(rel, title) {
   if (affectsCurrent) await flushSave();
   try {
     const newRel = await call('item_rename', { rel, title });
+    remapTargets(rel, newRel);
     if (affectsCurrent) setCurrentRel(S.current.rel === rel ? newRel : newRel + S.current.rel.slice(rel.length));
     if (S.book === rel) S.book = newRel;
     const parts = rel.split('/');
@@ -598,6 +604,7 @@ function sectionMenu(e, rel, s, inbox) {
   } else if (!inbox) {
     const [b, c, f] = rel.split('/');
     items.push({ label: 'New section below', run: () => newSection(`${b}/${c}`, f) });
+    items.push({ label: S.settings.targets?.[rel] ? 'Change word target…' : 'Set a word target…', run: () => targetDialog(rel, s.title) });
   } else {
     items.push({ label: 'File into a chapter…', run: async () => { await openSection(rel); } });
   }
@@ -625,7 +632,9 @@ function bookMenu(e) {
       if (t) await renameItem(b.name, t);
     } },
     { label: b.goal ? 'Change word goal' : 'Set a word goal', run: goalDialog },
-    { label: 'Export whole book as Markdown…', run: exportBook },
+    { label: 'Export to Word…', run: exportWord },
+    { label: 'Export to PDF…', run: exportPdf },
+    { label: 'Export to Markdown…', run: exportBook },
     { label: 'Backups and restore…', run: backupsDialog },
     '-',
     { label: 'New book…', run: newBook },
@@ -694,7 +703,7 @@ async function openSection(rel) {
   await flushSave();
   let loaded;
   try { loaded = await call('section_read', { rel }); } catch (e) { toast(String(e)); await refresh(); return; }
-  S.current = { ...parseRel(rel), hash: loaded.hash };
+  S.current = { ...parseRel(rel), hash: loaded.hash, words: wordCount(loaded.text) };
   const b = S.current.book;
   if (!S.current.inbox) { S.book = b; store.set('ws-book', b); store.set('ws-last-' + b, rel); }
   S.dirty = false;
@@ -775,7 +784,15 @@ function renderFoot() {
     if (c) parts.push(`Chapter ${formatCount(liveChapterWords(c))}`);
   }
   if (b) parts.push(b.goal ? `Book ${formatCount(liveBookWords())} / ${formatCount(b.goal)}` : `Book ${formatCount(liveBookWords())}`);
-  foot.replaceChildren(...parts.map((p) => h('span', {}, p)));
+  const kids = parts.map((p) => h('span', {}, p));
+  const target = S.current && S.settings.targets?.[S.current.rel];
+  if (target) kids.unshift(goalChip(wordCount(editor.text()), target, `Section target: ${formatCount(wordCount(editor.text()))} of ${formatCount(target)} words`, () => targetDialog(S.current.rel, S.current.title)));
+  if (S.settings.dailyGoal) {
+    const today = todayWords();
+    const streak = streakDays();
+    kids.unshift(goalChip(Math.max(0, today), S.settings.dailyGoal, `Today: ${formatCount(Math.max(0, today))} of ${formatCount(S.settings.dailyGoal)} words${streak > 1 ? ` · ${streak}-day streak` : ''}`, goalsDialog, `Today ${formatCount(Math.max(0, today))}${streak > 1 ? ` · ${streak} days` : ''}`));
+  }
+  foot.replaceChildren(...kids);
 }
 
 function onChange(text) {
@@ -809,6 +826,9 @@ async function save() {
       showConflict(editor.text(), res.disk_text, res.hash);
     } else {
       cur.hash = res.hash;
+      const words = wordCount(text);
+      if (!cur.inbox && !cur.note) addProgress(words - (cur.words ?? words));
+      cur.words = words;
       S.savedHashes = [res.hash, ...S.savedHashes].slice(0, 20);
       if (editor.text() === text) {
         S.dirty = false;
@@ -865,6 +885,7 @@ async function checkCurrentOnDisk() {
   if (!S.dirty) {
     const pos = editor.cursor();
     cur.hash = disk.hash;
+    cur.words = wordCount(disk.text);
     editor.load(disk.text, pos);
     S.dirty = false;
     renderFoot();
@@ -1020,7 +1041,9 @@ function settingsDialog() {
         oninput: (e) => { S.settings.measure = +e.target.value; measureOut.textContent = `Line width · about ${Math.round(S.settings.measure * 2)} characters`; saveSettings(); } })),
       h('label', { class: 'check' }, h('input', { type: 'checkbox', id: 'typewriter', checked: !!S.settings.typewriter,
         onchange: (e) => { S.settings.typewriter = e.target.checked; saveSettings(); } }), 'Typewriter scrolling (keep the line you’re writing in the middle)'),
-      h('p', {}, 'Focus mode: ⌘. (hides everything but the paragraph you’re writing). Sidebar: ⌘1. Reference panel: ⌘2. New section: ⌘N. New chapter: ⇧⌘N.'),
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', id: 'smart', checked: S.settings.smart !== false,
+        onchange: (e) => { S.settings.smart = e.target.checked; saveSettings(); } }), 'Smart quotes and dashes (“curly” quotes, -- becomes —, ... becomes …)'),
+      h('p', {}, h('a', { href: '#', onclick: (e) => { e.preventDefault(); close(); shortcutsDialog(); } }, 'Formatting and keyboard shortcuts')),
       h('div', { class: 'field' }, h('span', {}, 'Writing folder'), h('div', { class: 'path' }, S.root),
         h('div', {}, h('button', { class: 'btn', onclick: () => { close(); chooseFolder(); } }, 'Change folder…'))),
       h('div', { class: 'field' }, h('span', {}, 'Updates'), h('div', { class: 'path', id: 'version-line' }, 'Writing Studio'),
@@ -1035,17 +1058,32 @@ function settingsDialog() {
 
 let panelRel = null;
 
+const escHtml = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+function inline(text) {
+  const span = document.createElement('span');
+  span.innerHTML = escHtml(text)
+    .replace(/\*\*(?=\S)(.+?\S)\*\*/g, '<b>$1</b>').replace(/__(?=\S)(.+?\S)__/g, '<b>$1</b>')
+    .replace(/~~(?=\S)(.+?\S)~~/g, '<s>$1</s>')
+    .replace(/\*(?=\S)(.+?\S)\*/g, '<i>$1</i>').replace(/(^|\W)_(?=\S)(.+?\S)_(?=\W|$)/g, '$1<i>$2</i>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<u>$1</u>');
+  return span;
+}
+
 function lightMarkdown(text) {
   // Headings and list bullets get a little shape; everything else stays as written.
+  text = text.replace(/<!--[\s\S]*?(-->|$)/g, '');
   return text.split('\n').map((line) => {
     const m = line.match(/^(#{1,6})\s+(.*)$/);
-    if (m) return h('div', { class: `ref-h ref-h${Math.min(m[1].length, 3)}` }, m[2]);
+    if (m) return h('div', { class: `ref-h ref-h${Math.min(m[1].length, 3)}` }, inline(m[2]));
     const task = line.match(/^\s*[-*+]\s+\[([ xX])\]\s*(.*)$/);
-    if (task) return h('div', { class: 'ref-li' + (task[1] === ' ' ? '' : ' ref-done') }, h('span', { class: 'ref-bullet' }, task[1] === ' ' ? '☐' : '☑'), h('span', {}, task[2]));
+    if (task) return h('div', { class: 'ref-li' + (task[1] === ' ' ? '' : ' ref-done') }, h('span', { class: 'ref-bullet' }, task[1] === ' ' ? '☐' : '☑'), inline(task[2]));
     const li = line.match(/^\s*([-*+]|\d+\.)\s+(.*)$/);
-    if (li) return h('div', { class: 'ref-li' }, h('span', { class: 'ref-bullet' }, /\d/.test(li[1]) ? li[1] : '•'), h('span', {}, li[2]));
+    if (li) return h('div', { class: 'ref-li' }, h('span', { class: 'ref-bullet' }, /\d/.test(li[1]) ? li[1] : '•'), inline(li[2]));
     if (!line.trim()) return h('div', { class: 'ref-gap' });
-    return h('div', { class: 'ref-p' }, line);
+    const q = line.match(/^>\s?(.*)$/);
+    if (q) return h('div', { class: 'ref-p ref-q' }, inline(q[1]));
+    return h('div', { class: 'ref-p' }, inline(line));
   });
 }
 
@@ -1122,6 +1160,357 @@ async function installUpdate() {
   }
 }
 
+// ------------------------------------------------------------------ links
+
+async function linkDialog() {
+  const url = await ask('Add a link', { label: 'Web address', value: 'https://', okText: 'Add link', note: 'Select words first to turn them into the link; otherwise the address itself is added.' });
+  if (url && url !== 'https://') editor.link(/^[a-z]+:/i.test(url) ? url : 'https://' + url);
+}
+
+// ------------------------------------------------------------------ quick open (⌘O)
+
+function allSections() {
+  const out = [];
+  for (const b of S.lib?.books || []) {
+    for (const c of b.chapters) for (const s of c.sections) out.push({ rel: relOf(b.name, c.name, s.file), title: s.title, where: `${b.title} › ${c.name}`, book: b.name });
+    for (const s of b.notes) out.push({ rel: `${b.name}/${REFERENCE}/${s.file}`, title: s.title, where: `${b.title} › Reference`, book: b.name });
+  }
+  for (const s of S.lib?.inbox || []) out.push({ rel: `${INBOX}/${s.file}`, title: s.title, where: 'Inbox' });
+  return out;
+}
+
+/** Letters of `q` appear in order in `text`; a lower score is a better match. */
+export function fuzzyScore(q, text) {
+  q = q.toLowerCase(); text = text.toLowerCase();
+  if (!q) return 0;
+  const at = text.indexOf(q);
+  if (at >= 0) return at === 0 ? 0 : 1 + at / 100;
+  let i = 0, gaps = 0, last = -1;
+  for (const ch of q) {
+    const j = text.indexOf(ch, i);
+    if (j < 0) return null;
+    if (last >= 0) gaps += j - last - 1;
+    last = j; i = j + 1;
+  }
+  return 10 + gaps;
+}
+
+function quickOpen() {
+  if (!S.lib) return;
+  dialog((box, close) => {
+    const items = allSections();
+    let shown = [], sel = 0;
+    const input = h('input', { type: 'text', id: 'qo-input', placeholder: 'Type a section name…', autocomplete: 'off', spellcheck: 'false' });
+    const list = h('div', { class: 'qo-list', role: 'listbox' });
+    const go = async (it) => { if (!it) return; close(); await openSection(it.rel); };
+    const render = () => {
+      const q = input.value.trim();
+      shown = items.map((it) => ({ it, sc: fuzzyScore(q, it.title) ?? (fuzzyScore(q, it.where + ' ' + it.title) ?? null) }))
+        .filter((x) => x.sc !== null)
+        .sort((a, b) => a.sc - b.sc || (a.it.book === S.book ? -1 : 1))
+        .slice(0, 30).map((x) => x.it);
+      sel = Math.min(sel, Math.max(0, shown.length - 1));
+      list.replaceChildren(...shown.map((it, i) => h('button', { class: 'qo-item' + (i === sel ? ' on' : ''), role: 'option', onclick: () => go(it) },
+        h('span', { class: 'qo-title' }, it.title), h('span', { class: 'qo-where' }, it.where))));
+      if (!shown.length) list.append(h('div', { class: 'qo-empty' }, 'No section matches'));
+      list.querySelector('.on')?.scrollIntoView({ block: 'nearest' });
+    };
+    input.addEventListener('input', () => { sel = 0; render(); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(sel + 1, shown.length - 1); render(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(sel - 1, 0); render(); }
+      else if (e.key === 'Enter') { e.preventDefault(); go(shown[sel]); }
+      else if (e.key === 'Escape') close();
+    });
+    box.classList.add('qo');
+    box.append(input, list);
+    render();
+    setTimeout(() => input.focus());
+  });
+}
+
+// ------------------------------------------------------------------ find in book (⇧⌘F)
+
+async function bookTexts(b) {
+  const out = [];
+  const add = async (rel, title, where) => {
+    const text = S.current?.rel === rel ? editor.text() : (await call('section_read', { rel }).catch(() => null))?.text;
+    if (text != null) out.push({ rel, title, where, text });
+  };
+  for (const c of b.chapters) for (const s of c.sections) await add(relOf(b.name, c.name, s.file), s.title, c.name);
+  for (const s of b.notes) await add(`${b.name}/${REFERENCE}/${s.file}`, s.title, 'Reference');
+  return out;
+}
+
+export function findAll(text, q, matchCase) {
+  if (!q) return [];
+  const hay = matchCase ? text : text.toLowerCase(), needle = matchCase ? q : q.toLowerCase();
+  const out = [];
+  for (let i = hay.indexOf(needle); i >= 0; i = hay.indexOf(needle, i + needle.length)) out.push(i);
+  return out;
+}
+
+function findInBook() {
+  const b = book();
+  if (!b) return;
+  dialog((box, close) => {
+    const find = h('input', { type: 'text', id: 'fb-find', placeholder: 'Find in this book', autocomplete: 'off' });
+    const repl = h('input', { type: 'text', id: 'fb-replace', placeholder: 'Replace with', autocomplete: 'off' });
+    const caseBox = h('input', { type: 'checkbox', id: 'fb-case' });
+    const summary = h('p', { class: 'fb-summary' });
+    const results = h('div', { class: 'fb-results' });
+    const replBtn = h('button', { class: 'btn', id: 'fb-replace-all', disabled: true }, 'Replace all');
+    let texts = null, hits = [], timer = null;
+    const run = async () => {
+      const q = find.value;
+      texts = texts || await bookTexts(b);
+      hits = q ? texts.map((t) => ({ ...t, at: findAll(t.text, q, caseBox.checked) })).filter((t) => t.at.length) : [];
+      const total = hits.reduce((n, t) => n + t.at.length, 0);
+      summary.textContent = !q ? 'Searches every section and reference note in this book.' : total ? `${formatCount(total)} match${total === 1 ? '' : 'es'} in ${hits.length} section${hits.length === 1 ? '' : 's'}` : 'No matches';
+      replBtn.disabled = !total;
+      results.replaceChildren(...hits.flatMap((t) => [
+        h('div', { class: 'fb-sec' }, h('b', {}, t.title), h('span', {}, ` ${t.where} · ${t.at.length}`)),
+        ...t.at.slice(0, 5).map((i) => {
+          const a = Math.max(0, i - 40), z = Math.min(t.text.length, i + q.length + 60);
+          const plain = (x) => x.replace(/<!--|-->|\*\*|__|~~|`|^\s*(#{1,6}|>|[-*+]( \[[ xX]\])?|\d+\.)\s/gm, '').replace(/\s+/g, ' ');
+          const line = h('button', { class: 'fb-hit', onclick: async () => { close(); await openSection(t.rel); editor.select(i, i + q.length); } },
+            (a > 0 ? '…' : '') + plain(t.text.slice(a, i)), h('mark', {}, t.text.slice(i, i + q.length)), plain(t.text.slice(i + q.length, z)) + (z < t.text.length ? '…' : ''));
+          return line;
+        }),
+      ]));
+    };
+    const later = () => { clearTimeout(timer); timer = setTimeout(run, 150); };
+    find.addEventListener('input', later);
+    caseBox.addEventListener('change', run);
+    find.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+    replBtn.addEventListener('click', async () => {
+      const q = find.value, r = repl.value;
+      const total = hits.reduce((n, t) => n + t.at.length, 0);
+      if (!q || !total) return;
+      replBtn.disabled = true;
+      await flushSave();
+      try { await takeSnapshot(b.name); } catch { /* still safe: each file keeps Drive history */ }
+      let done = 0;
+      for (const t of hits) {
+        const fresh = await call('section_read', { rel: t.rel });
+        const at = findAll(fresh.text, q, caseBox.checked);
+        if (!at.length) continue;
+        let out = '', last = 0;
+        for (const i of at) { out += fresh.text.slice(last, i) + r; last = i + q.length; }
+        out += fresh.text.slice(last);
+        const res = await call('section_save', { rel: t.rel, text: out, baseHash: fresh.hash });
+        if (res.status !== 'saved') continue;
+        done += at.length;
+        S.savedHashes = [res.hash, ...S.savedHashes].slice(0, 20);
+        if (S.current?.rel === t.rel) { S.current.hash = res.hash; S.current.words = wordCount(out); editor.load(out, editor.cursor()); S.dirty = false; }
+      }
+      texts = null;
+      toast(`Replaced ${formatCount(done)} match${done === 1 ? '' : 'es'}. A backup snapshot was taken first.`);
+      await refresh();
+      run();
+    });
+    box.classList.add('fb');
+    box.append(
+      h('h2', {}, `Find in “${b.title}”`),
+      h('div', { class: 'fb-row' }, find, h('label', { class: 'check' }, caseBox, 'Match case')),
+      h('div', { class: 'fb-row' }, repl, replBtn),
+      summary, results,
+      h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: close }, 'Done')));
+    const sel = editor.view.state.selection.main;
+    if (!sel.empty && sel.to - sel.from < 80) find.value = editor.view.state.sliceDoc(sel.from, sel.to);
+    run();
+    setTimeout(() => { find.focus(); find.select(); });
+  }, { wide: false });
+}
+
+// ------------------------------------------------------------------ export to Word and PDF
+
+async function exportWord() {
+  const b = book();
+  if (!b) return;
+  await flushSave();
+  const path = await saveDialog({ defaultPath: `${b.title} - Manuscript ${stamp().slice(0, 10)}.docx`, filters: [{ name: 'Word document', extensions: ['docx'] }] });
+  if (!path) return;
+  try { await call('book_export_docx', { book: b.name, path }); toast('Exported to Word'); } catch (e) { toast(String(e), 6000); }
+}
+
+async function exportPdf() {
+  const b = book();
+  if (!b) return;
+  await flushSave();
+  let html;
+  try { html = await call('book_export_html', { book: b.name }); } catch (e) { toast(String(e), 6000); return; }
+  let root = $('#print-root');
+  if (!root) { root = h('div', { id: 'print-root' }); document.body.append(root); }
+  root.innerHTML = html;
+  document.title = `${b.title} - Manuscript`;
+  toast('In the print window, choose PDF › Save as PDF', 6000);
+  await sleep(60);
+  try { await invoke('print_window'); } catch { window.print(); }
+  setTimeout(() => { root.innerHTML = ''; document.title = 'Writing Studio'; }, 1500);
+}
+
+// ------------------------------------------------------------------ goals
+
+let progress = {}; // { device: { 'YYYY-MM-DD': words } }
+const dayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+async function loadProgress() {
+  try { progress = await call('progress_read'); } catch { progress = {}; }
+  renderFoot();
+}
+let progressTimer = null;
+function addProgress(delta) {
+  if (!delta) return;
+  const key = dayKey();
+  const mine = progress[S.device] || (progress[S.device] = {});
+  mine[key] = (mine[key] || 0) + delta;
+  clearTimeout(progressTimer);
+  progressTimer = setTimeout(() => call('progress_write', { device: S.device, days: mine }).catch(() => {}), 1500);
+}
+function wordsOn(key) {
+  return Object.values(progress).reduce((n, days) => n + (days[key] || 0), 0);
+}
+function todayWords() {
+  const live = S.current && !S.current.inbox && !S.current.note ? wordCount(editor.text()) - (S.current.words ?? 0) : 0;
+  return wordsOn(dayKey()) + live;
+}
+function streakDays() {
+  const goal = S.settings.dailyGoal;
+  if (!goal) return 0;
+  let n = 0;
+  const d = new Date();
+  if (todayWords() < goal) d.setDate(d.getDate() - 1); // today still counts once it's reached
+  else n = 1, d.setDate(d.getDate() - 1);
+  while (wordsOn(dayKey(d)) >= goal) { n++; d.setDate(d.getDate() - 1); }
+  return n;
+}
+
+function goalChip(value, goal, title, onclick, label) {
+  const pct = Math.max(0, Math.min(1, value / goal));
+  const r = 6.5, c = 2 * Math.PI * r;
+  const ring = `<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="${r}" fill="none" stroke="var(--rule)" stroke-width="2.4"/><circle cx="8" cy="8" r="${r}" fill="none" stroke="${pct >= 1 ? 'var(--ok)' : 'var(--hl)'}" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="${(c * pct).toFixed(2)} ${c.toFixed(2)}" transform="rotate(-90 8 8)"/></svg>`;
+  const b = h('button', { class: 'goal-chip' + (pct >= 1 ? ' met' : ''), title, onclick });
+  b.innerHTML = ring;
+  b.append(h('span', {}, label || `${formatCount(value)} / ${formatCount(goal)}`));
+  return b;
+}
+
+function remapTargets(oldRel, newRel) {
+  const t = S.settings.targets || {};
+  let changed = false;
+  for (const k of Object.keys(t)) {
+    if (k === oldRel || k.startsWith(oldRel + '/')) { t[newRel + k.slice(oldRel.length)] = t[k]; delete t[k]; changed = true; }
+  }
+  if (changed) saveSettings();
+}
+
+async function targetDialog(rel, title) {
+  const cur = S.settings.targets?.[rel];
+  const v = await ask(`Word target for “${title}”`, { label: 'Words', value: cur ? String(cur) : '', okText: 'Save target', note: 'A ring at the bottom of the window fills as you write. Leave empty to remove it.' });
+  if (v === null && !cur) return;
+  const n = parseInt(String(v || '').replace(/[^\d]/g, ''), 10);
+  S.settings.targets = { ...(S.settings.targets || {}) };
+  if (n) S.settings.targets[rel] = n; else delete S.settings.targets[rel];
+  saveSettings();
+  renderFoot();
+}
+
+function goalsDialog() {
+  dialog((box, close) => {
+    const b = book();
+    const daily = h('input', { type: 'text', id: 'goal-daily', inputmode: 'numeric', value: S.settings.dailyGoal ? String(S.settings.dailyGoal) : '', placeholder: 'e.g. 500' });
+    const bookGoal = h('input', { type: 'text', id: 'goal-book', inputmode: 'numeric', value: b?.goal ? String(b.goal) : '', placeholder: 'e.g. 60000' });
+    const canTarget = S.current && !S.current.inbox && !S.current.note;
+    const sec = h('input', { type: 'text', id: 'goal-section', inputmode: 'numeric', value: canTarget && S.settings.targets?.[S.current.rel] ? String(S.settings.targets[S.current.rel]) : '', placeholder: 'e.g. 1500', disabled: !canTarget });
+    const num = (el) => parseInt(el.value.replace(/[^\d]/g, ''), 10) || null;
+    const today = Math.max(0, todayWords()), streak = streakDays();
+    box.append(
+      h('h2', {}, 'Writing goals'),
+      h('p', {}, `Today you’ve written ${formatCount(today)} words${streak > 1 ? `, and you’re on a ${streak}-day streak` : ''}. Words count across both Macs.`),
+      h('label', { class: 'field' }, h('span', {}, 'Daily goal (words a day)'), daily),
+      h('label', { class: 'field' }, h('span', {}, canTarget ? `Target for “${S.current.title}”` : 'Section target (open a section first)'), sec),
+      b ? h('label', { class: 'field' }, h('span', {}, `Goal for “${b.title}”`), bookGoal) : null,
+      h('div', { class: 'actions' },
+        h('button', { class: 'btn', onclick: close }, 'Cancel'),
+        h('button', { class: 'btn primary', onclick: async () => {
+          S.settings.dailyGoal = num(daily);
+          if (canTarget) {
+            S.settings.targets = { ...(S.settings.targets || {}) };
+            if (num(sec)) S.settings.targets[S.current.rel] = num(sec); else delete S.settings.targets[S.current.rel];
+          }
+          saveSettings();
+          if (b && num(bookGoal) !== (b.goal || null)) {
+            try { await call('book_meta_set', num(bookGoal) ? { book: b.name, goal: num(bookGoal) } : { book: b.name, clearGoal: true }); } catch (e) { toast(String(e)); }
+            await refresh();
+          }
+          close();
+          renderFoot();
+        } }, 'Save goals')),
+    );
+  });
+}
+
+// ------------------------------------------------------------------ help
+
+function shortcutsDialog() {
+  const rows = [
+    ['Bold / Italic / Strikethrough', '⌘B  ⌘I  ⇧⌘X'],
+    ['Heading 1, 2, 3 / Body text', '⌥⌘1  ⌥⌘2  ⌥⌘3  ⌥⌘0'],
+    ['Bulleted / Numbered list', '⇧⌘8  ⇧⌘7'],
+    ['Checklist', '⇧⌘L'],
+    ['Quote', '⇧⌘\''],
+    ['Indent or outdent a list item', 'Tab  ⇧Tab'],
+    ['Link', '⌘K'],
+    ['Note to self (not counted or exported)', '⇧⌘K'],
+    ['Clear formatting', '⌘\\'],
+    ['Quick Open: jump to any section', '⌘O'],
+    ['Find / Find in Book', '⌘F  ⇧⌘F'],
+    ['Focus mode / Sidebar / Reference panel', '⌘.  ⌘1  ⌘2'],
+    ['New section / New chapter', '⌘N  ⇧⌘N'],
+    ['Export to PDF', '⌘P'],
+  ];
+  dialog((box, close) => {
+    box.append(
+      h('h2', {}, 'Formatting and shortcuts'),
+      h('p', {}, 'Everything is also in the Format menu, and in the small bar that appears when you select text. You can still type Markdown: **bold**, *italic*, # heading, - list, 1. list, - [ ] checkbox, > quote.'),
+      h('div', { class: 'keys' }, ...rows.flatMap(([a, k]) => [h('span', {}, a), h('kbd', {}, k)])),
+      h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: close }, 'Done')));
+  });
+}
+
+// ------------------------------------------------------------------ menu bar commands
+
+const FORMAT = new Set(['bold', 'italic', 'strike', 'h1', 'h2', 'h3', 'body', 'bullets', 'numbers', 'checklist', 'quote', 'note', 'clear', 'find']);
+const ACTIONS = {
+  settings: () => settingsDialog(),
+  updates: () => checkForUpdates(true),
+  'new-section': () => newSection(),
+  'new-chapter': () => newChapter(),
+  'new-note': () => newNote(),
+  'new-book': () => newBook(),
+  'quick-open': () => quickOpen(),
+  'export-word': () => exportWord(),
+  'export-pdf': () => exportPdf(),
+  'export-md': () => exportBook(),
+  save: () => flushSave(),
+  'find-book': () => findInBook(),
+  'smart-typing': () => { S.settings.smart = S.settings.smart === false; saveSettings(); toast(S.settings.smart ? 'Smart quotes and dashes on' : 'Smart quotes and dashes off'); },
+  link: () => linkDialog(),
+  focus: () => setFocusMode(!document.body.classList.contains('focus-mode')),
+  typewriter: () => { S.settings.typewriter = !S.settings.typewriter; saveSettings(); toast(S.settings.typewriter ? 'Typewriter scrolling on' : 'Typewriter scrolling off'); },
+  sidebar: () => document.body.classList.toggle('no-sidebar'),
+  panel: () => togglePanel(),
+  goals: () => goalsDialog(),
+  shortcuts: () => shortcutsDialog(),
+};
+function runAction(id) {
+  if (S.dialogOpen && id !== 'save') return;
+  if (FORMAT.has(id)) { if (S.current) editor.run(id); return; }
+  ACTIONS[id]?.();
+}
+listen('menu', (e) => runAction(e.payload)).catch(() => {});
+
 // ------------------------------------------------------------------ keys, focus mode, lifecycle
 
 function setFocusMode(on) {
@@ -1135,13 +1524,13 @@ document.addEventListener('keydown', (e) => {
     if (document.querySelector('.menu')) return closeMenus();
     if (document.body.classList.contains('focus-mode')) return setFocusMode(false);
   }
-  if (!mod || S.dialogOpen) return;
-  if (e.key === '.') { e.preventDefault(); setFocusMode(!document.body.classList.contains('focus-mode')); }
-  else if (e.key === '1') { e.preventDefault(); document.body.classList.toggle('no-sidebar'); }
-  else if (e.key === '2') { e.preventDefault(); togglePanel(); }
-  else if (e.key.toLowerCase() === 'n' && e.shiftKey) { e.preventDefault(); newChapter(); }
-  else if (e.key.toLowerCase() === 'n') { e.preventDefault(); newSection(); }
-  else if (e.key === ',') { e.preventDefault(); settingsDialog(); }
+  // On the Mac these keys arrive through the menu bar; this covers the browser preview.
+  if (!mod || S.dialogOpen || e.defaultPrevented) return;
+  const k = e.key.toLowerCase();
+  const id = e.key === '.' ? 'focus' : e.key === '1' && !e.altKey ? 'sidebar' : e.key === '2' && !e.altKey ? 'panel'
+    : k === 'n' ? (e.shiftKey ? 'new-chapter' : 'new-section') : e.key === ',' ? 'settings'
+    : k === 'o' ? 'quick-open' : k === 'f' && e.shiftKey ? 'find-book' : k === 'p' ? 'export-pdf' : e.key === '/' ? 'shortcuts' : null;
+  if (id) { e.preventDefault(); runAction(id); }
 });
 
 window.addEventListener('blur', () => { flushSave(); });

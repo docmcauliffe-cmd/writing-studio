@@ -121,8 +121,24 @@ pub fn hash(text: &str) -> String {
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Remove notes to self (`<!-- ... -->`): they are never counted or exported.
+pub fn strip_notes(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find("<!--") {
+        out.push_str(&rest[..i]);
+        match rest[i + 4..].find("-->") {
+            Some(j) => rest = &rest[i + 4 + j + 3..],
+            None => { rest = ""; }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 pub fn word_count(text: &str) -> usize {
-    text.split_whitespace()
+    strip_notes(text)
+        .split_whitespace()
         .filter(|w| w.chars().any(|c| c.is_alphanumeric()))
         .count()
 }
@@ -502,7 +518,8 @@ pub fn export_book(root: &Path, book: &str) -> Res<String> {
         out.push_str(&format!("## {}\n\n", ch.name));
         for s in &ch.sections {
             let text = fs::read_to_string(root.join(book).join(&ch.name).join(&s.file)).unwrap_or_default();
-            let t = text.trim();
+            let clean = strip_notes(&text);
+            let t = clean.trim();
             if !t.is_empty() {
                 out.push_str(t);
                 out.push_str("\n\n");
@@ -521,6 +538,30 @@ pub fn read_settings(root: &Path) -> String {
 pub fn write_settings(root: &Path, json: &str) -> Res<()> {
     serde_json::from_str::<serde_json::Value>(json).map_err(err("Settings are not valid"))?;
     atomic_write(&root.join(APP_DATA).join("settings.json"), json.as_bytes())
+}
+
+/// Words written per day on each Mac: `App Data/progress/<Mac>.json` = {"2026-11-24": 512}.
+/// One file per Mac, so the two Macs never write the same file.
+pub fn read_progress(root: &Path) -> HashMap<String, HashMap<String, i64>> {
+    let mut out = HashMap::new();
+    if let Ok(rd) = fs::read_dir(root.join(APP_DATA).join("progress")) {
+        for e in rd.flatten() {
+            let path = e.path();
+            if path.extension().and_then(|x| x.to_str()) != Some("json") {
+                continue;
+            }
+            let name = path.file_stem().and_then(|x| x.to_str()).unwrap_or_default().to_string();
+            if let Ok(days) = fs::read_to_string(&path).map_err(|_| ()).and_then(|t| serde_json::from_str::<HashMap<String, i64>>(&t).map_err(|_| ())) {
+                out.insert(name, days);
+            }
+        }
+    }
+    out
+}
+
+pub fn write_progress(root: &Path, device: &str, days: &HashMap<String, i64>) -> Res<()> {
+    let body = serde_json::to_string_pretty(days).map_err(err("Could not record progress"))?;
+    atomic_write(&root.join(APP_DATA).join("progress").join(format!("{}.json", safe_name(device))), body.as_bytes())
 }
 
 pub fn write_activity(root: &Path, a: &Activity) -> Res<()> {

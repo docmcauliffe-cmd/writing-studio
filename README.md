@@ -44,21 +44,38 @@ On each Mac, right-click the Writing Studio folder in Finder and choose **Google
 
 When a new version is published, an **Update to x.y.z** button appears at the top right. Click it: your writing is saved, the update installs, and the app restarts. You can also check in **Look & settings › Check for updates**. Updates come from this repository's Releases and are signed, so the app only installs versions built here. Install the update on each Mac.
 
+## Writing and formatting
+
+The text looks formatted while you write: bold is bold and headings are headings, and the Markdown symbols stay out of sight. The files are still plain Markdown.
+
+- **Format menu** in the menu bar, and a small bar that appears when you select text.
+- **⌘B / ⌘I** work like Pages. With a selection, they toggle it. With the cursor inside a word, they format the word. Anywhere else, they turn bold or italic on for what you type next; press again to turn it off.
+- **Lists**: ⇧⌘8 bullets, ⇧⌘7 numbers, ⇧⌘L checklist (click a box to tick it). Return adds the next item, Return on an empty item ends the list, and Tab / ⇧Tab nest and un-nest.
+- **Notes to self** (⇧⌘K): highlighted comments that are never counted or exported. Saved as `<!-- note -->`, which other Markdown apps hide too.
+- **Smart quotes and dashes**: “curly” quotes, `--` becomes —, `...` becomes …. Turn off in Edit › Smart Quotes and Dashes.
+- **Quick Open (⌘O)** jumps to any section by typing a few letters. **Find (⌘F)** searches the section; **Find in Book (⇧⌘F)** searches and replaces across the whole book (a backup snapshot is taken before replacing).
+- **Export** (File menu, or the book menu): Word (.docx), PDF (through the print window: PDF › Save as PDF), or Markdown. Chapters start on new pages; notes to self are left out.
+- **Goals** (View › Writing Goals): a daily word goal with a streak, a target per section, and a goal for the book. Rings at the bottom of the window fill as you write; words count across both Macs.
+
 ## Shortcuts
 
 | Keys | Action |
 | --- | --- |
+| ⌘B / ⌘I / ⇧⌘X | Bold / italic / strikethrough |
+| ⌥⌘1, ⌥⌘2, ⌥⌘3 / ⌥⌘0 | Heading 1, 2, 3 / body text |
+| ⇧⌘8 / ⇧⌘7 / ⇧⌘L | Bulleted list / numbered list / checklist |
+| ⇧⌘' | Quote |
+| ⌘K | Link |
+| ⇧⌘K | Note to self |
+| ⌘\\ | Clear formatting |
+| ⌘O | Quick Open |
+| ⌘F / ⇧⌘F | Find / Find in Book |
+| ⌘P | Export to PDF |
 | ⌘. | Focus mode: hide everything but the paragraph you're writing |
-| ⌘1 | Show or hide the sidebar |
-| ⌘2 | Show or hide the Reference note beside your writing |
-| ⌘B / ⌘I | Bold / italic (the selection, or the word the cursor is in) |
-| ⇧⌘L | Turn lines into a checklist, or back |
-| ⌘N | New section after the current one |
-| ⇧⌘N | New chapter |
+| ⌘1 / ⌘2 | Sidebar / Reference note beside your writing |
+| ⌘N / ⇧⌘N | New section / new chapter |
 | ⌘, | Look & settings |
-| ⌘S | Save now (it saves automatically anyway) |
-
-Lists: start a line with `* ` or `- ` for a bullet, `1. ` for a numbered list, or `- [ ] ` for a checkbox you can click. Return continues the list; Return on an empty item ends it.
+| ⌘/ | All formatting and shortcuts |
 
 Double-click a chapter or section to rename it. Right-click for more options. Drag sections and chapters to reorder them, or drop a section on a chapter title to move it there.
 

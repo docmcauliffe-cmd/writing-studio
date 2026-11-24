@@ -1,4 +1,6 @@
+mod export;
 mod library;
+mod menu;
 
 use library::*;
 use notify::{RecursiveMode, Watcher};
@@ -104,6 +106,22 @@ fn book_export(root_dir: String, book: String) -> Res<String> {
 }
 
 #[tauri::command]
+fn book_export_docx(root_dir: String, book: String, path: String) -> Res<()> {
+    export::export_docx(&root(&root_dir), &book, Path::new(&path))
+}
+
+#[tauri::command]
+fn book_export_html(root_dir: String, book: String) -> Res<String> {
+    export::export_html(&root(&root_dir), &book)
+}
+
+/// Open the Mac print dialog for the window (its PDF button saves the book as a PDF).
+#[tauri::command]
+fn print_window(window: tauri::WebviewWindow) -> Res<()> {
+    window.print().map_err(|e| format!("Could not open the print dialog: {e}"))
+}
+
+#[tauri::command]
 fn export_write(path: String, text: String) -> Res<()> {
     atomic_write(Path::new(&path), text.as_bytes())
 }
@@ -121,6 +139,16 @@ fn settings_write(root_dir: String, json: String) -> Res<()> {
 #[tauri::command]
 fn activity_write(root_dir: String, activity: Activity) -> Res<()> {
     write_activity(&root(&root_dir), &activity)
+}
+
+#[tauri::command]
+fn progress_read(root_dir: String) -> std::collections::HashMap<String, std::collections::HashMap<String, i64>> {
+    read_progress(&root(&root_dir))
+}
+
+#[tauri::command]
+fn progress_write(root_dir: String, device: String, days: std::collections::HashMap<String, i64>) -> Res<()> {
+    write_progress(&root(&root_dir), &device, &days)
 }
 
 #[tauri::command]
@@ -197,18 +225,28 @@ pub fn run() {
             book_meta_set,
             inbox_file,
             book_export,
+            book_export_docx,
+            book_export_html,
+            print_window,
             export_write,
             settings_read,
             settings_write,
             activity_write,
             activity_read,
+            progress_read,
+            progress_write,
             snapshot_take,
             snapshot_list,
             snapshot_restore,
             folder_exists,
             watch_start,
         ])
+        .on_menu_event(|app, event| {
+            let _ = app.emit("menu", event.id().0.clone());
+        })
         .setup(|app| {
+            let m = menu::build(app.handle())?;
+            app.set_menu(m)?;
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.set_title("Writing Studio");
             }
