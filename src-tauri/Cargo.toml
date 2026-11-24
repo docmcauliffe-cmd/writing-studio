@@ -1,6 +1,6 @@
 [package]
 name = "writing-studio"
-version = "0.5.0"
+version = "0.5.1"
 description = "A calm Markdown writing app for books"
 edition = "2021"
 

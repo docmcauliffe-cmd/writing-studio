@@ -26,7 +26,7 @@ import { relaunch } from '@tauri-apps/plugin-process';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { getVersion } from '@tauri-apps/api/app';
 import { createEditor, CLAUDE_ICON } from './editor.js';
-import { ACTIONS as CLAUDE_ACTIONS, buildPrompt, claudeTarget, projectId, isStoryNote } from './claude.js';
+import { ACTIONS as CLAUDE_ACTIONS, buildPrompt, claudeTarget, projectId, projectLinkProblem, isStoryNote } from './claude.js';
 import { lineDiff, wordCount, formatCount, stamp, snapshotDue, otherDeviceOn, dropIndex, minutesAgo } from './logic.js';
 
 const INBOX = 'Writing Studio - Inbox';
@@ -1589,9 +1589,16 @@ function claudeSettings() {
   const about = h('input', { type: 'text', id: 'claude-about', value: cb.about || '', placeholder: 'e.g. For executives: why the leadership bench is vanishing',
     oninput: (e) => setClaudeBook(b.name, { about: e.target.value.trim() }) });
   const hint = h('small', { class: 'hint', id: 'claude-project-hint' });
-  const showHint = (v) => { hint.textContent = !v.trim() ? 'Optional. In claude.ai, open the Project and copy its address.' : projectId(v) ? '✓ Ask Claude can open this Project.' : 'That doesn’t look like a Project link (claude.ai/project/…).'; };
-  const project = h('input', { type: 'text', id: 'claude-project', value: cb.project || '', placeholder: 'Paste the Project’s link',
-    oninput: (e) => { showHint(e.target.value); setClaudeBook(b.name, { project: projectId(e.target.value) ? e.target.value.trim() : '' }); } });
+  const showHint = (v) => {
+    const problem = projectLinkProblem(v);
+    hint.className = 'hint' + (problem ? ' bad' : projectId(v) ? ' good' : '');
+    hint.textContent = problem || (projectId(v) ? '✓ Ask Claude can open this Project.'
+      : 'Optional. In claude.ai, open the Project from Projects in the sidebar and copy its address (claude.ai/project/…).');
+  };
+  // Keep what was pasted, even if it won't work, so the reason stays visible; only a valid link is used.
+  const project = h('input', { type: 'text', id: 'claude-project', value: cb.project || '', placeholder: 'claude.ai/project/…',
+    spellcheck: 'false', autocapitalize: 'off', autocorrect: 'off',
+    oninput: (e) => { showHint(e.target.value); setClaudeBook(b.name, { project: e.target.value.trim() }); } });
   showHint(project.value);
   out.push(
     h('label', { class: 'field' }, h('span', {}, `What “${b.title}” is about`), about,
