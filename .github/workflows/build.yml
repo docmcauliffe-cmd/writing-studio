@@ -3,7 +3,9 @@ name: Build Mac app
 on:
   push:
     branches: [main]
+    paths-ignore: ['capture/**']   # the iPhone page deploys on Netlify, not as a Mac release
   pull_request:
+    paths-ignore: ['capture/**']
   workflow_dispatch:
 
 permissions:

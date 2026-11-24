@@ -7,4 +7,4 @@
 - Safety rules the code must keep: atomic writes only; never delete user text (trash = move to `Writing Studio - Trash`); never overwrite a version the editor hasn't seen (hash check in `save_section`); unlisted files still show up.
 - Folder names follow the owner's Drive rules: self-descriptive names ("Writing Studio - Inbox", not "Inbox"), dates as YYYY.MM.DD, max 4 levels below the top-level Drive folder.
 - Run `npm test` and `cd src-tauri && cargo test` before pushing. CI builds a universal macOS .dmg; pushes to main publish a GitHub Release tagged from the version in tauri.conf.json (this session's proxy can't push tags).
-- Phase 2 (planned): iPhone capture page that writes new notes into `Writing Studio - Inbox` via the Drive API (drive.file scope).
+- Phase 2: `capture/` is the iPhone page (Netlify static site + Google Apps Script web app that writes new notes into `Writing Studio - Inbox`, same pattern as Lift Log). See `capture/README.md`. Changes there do not trigger a Mac release.

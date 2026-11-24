@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<title>Capture</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Capture">
+<meta name="theme-color" content="#f3ecdf" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1b1e23" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f3ecdf; --panel: #ebe2d2; --text: #3b3127; --dim: #9a8b77; --rule: #ddd1bd; --hl: #8a4f2a; --ok: #5b7a4a; --shadow: rgba(59, 49, 39, .18);
+    --font: "IBM Plex Sans", -apple-system, system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1b1e23; --panel: #23272d; --text: #d9dce1; --dim: #6f7782; --rule: #31363e; --hl: #e0b45a; --ok: #8fb37a; --shadow: rgba(0, 0, 0, .5); }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); }
+  body { display: flex; flex-direction: column; height: 100dvh; padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); overflow: hidden; }
+  #app { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 20px 6px; flex: none; }
+  .status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--dim); min-height: 36px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex: none; transition: background .2s; }
+  .dot.wait { background: var(--hl); }
+  .dot.off { background: var(--dim); }
+  .send { font-weight: 600; font-size: 15px; color: var(--bg); background: var(--hl); border-radius: 999px; padding: 8px 18px; transition: opacity .15s, transform .1s; }
+  .send:active { transform: scale(.97); }
+  .send:disabled { opacity: .35; }
+
+  main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  textarea { flex: 1; width: 100%; resize: none; border: 0; outline: 0; background: transparent; color: var(--text); font: 19px/1.6 var(--font); padding: 8px 20px 24px; caret-color: var(--hl); }
+  textarea::placeholder { color: var(--dim); opacity: .7; }
+  footer { flex: none; display: flex; justify-content: space-between; padding: 6px 20px calc(8px + env(safe-area-inset-bottom)); font-size: 12px; color: var(--dim); }
+
+  .sheet-bg { position: fixed; inset: 0; background: var(--shadow); opacity: 0; pointer-events: none; transition: opacity .2s; }
+  .sheet-bg.on { opacity: 1; pointer-events: auto; }
+  .sheet { position: fixed; left: 0; right: 0; bottom: 0; max-height: 75dvh; overflow: auto; background: var(--panel); border-radius: 16px 16px 0 0; padding: 18px 20px calc(20px + env(safe-area-inset-bottom)); transform: translateY(105%); transition: transform .25s ease; box-shadow: 0 -8px 30px var(--shadow); }
+  .sheet.on { transform: none; }
+  .sheet h2 { font-size: 15px; font-weight: 600; margin: 0 0 12px; }
+  .note { padding: 10px 0; border-top: 1px solid var(--rule); font-size: 14px; }
+  .note .t { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.45; }
+  .note .m { font-size: 12px; color: var(--dim); margin-top: 3px; }
+  .note .m.wait { color: var(--hl); }
+  .empty { color: var(--dim); font-size: 14px; padding: 6px 0 12px; }
+  .link { font-size: 13px; color: var(--dim); text-decoration: underline; margin-top: 16px; }
+
+  .connect { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 24px 28px 15dvh; gap: 14px; }
+  .connect h1 { font-size: 26px; font-weight: 500; margin: 0; letter-spacing: -.01em; }
+  .connect p { margin: 0; color: var(--dim); font-size: 15px; line-height: 1.5; }
+  .connect input { width: 100%; font: 15px var(--font); color: var(--text); background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 12px 14px; outline: 0; }
+  .connect input:focus { border-color: var(--hl); }
+  .row { display: flex; gap: 10px; }
+  .btn { flex: 1; font-weight: 600; font-size: 15px; border-radius: 10px; padding: 12px; background: var(--panel); border: 1px solid var(--rule); }
+  .btn.primary { background: var(--hl); color: var(--bg); border-color: var(--hl); }
+  .err { color: var(--hl); font-size: 14px; min-height: 1.4em; }
+
+  .toast { position: fixed; left: 50%; top: calc(env(safe-area-inset-top) + 58px); transform: translate(-50%, -10px); background: var(--text); color: var(--bg); font-size: 14px; padding: 9px 16px; border-radius: 999px; opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; max-width: 88vw; text-align: center; box-shadow: 0 6px 20px var(--shadow); }
+  .toast.on { opacity: 1; transform: translate(-50%, 0); }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="toast" id="toast"></div>
+<script>
+'use strict';
+// Writing Studio capture. Each note is kept on the phone until the Google script confirms it
+// is saved in "Writing Studio - Inbox", so nothing is lost without signal.
+const K = { conn: 'wsc-conn', draft: 'wsc-draft', queue: 'wsc-queue', recent: 'wsc-recent' };
+const load = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch { return d; } };
+const keep = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const words = (t) => (t.match(/\S+/g) || []).length;
+const pad = (n) => String(n).padStart(2, '0');
+const stampOf = (d) => `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())} ${pad(d.getHours())}${pad(d.getMinutes())}`;
+const newId = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2)).replace(/[^\w-]/g, '');
+
+let queue = load(K.queue, []);   // notes waiting to upload, oldest first
+let recent = load(K.recent, []); // last notes sent, newest first
+let syncing = false, lastError = '';
+
+function toast(msg, ms = 2600) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('on');
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => t.classList.remove('on'), ms);
+}
+
+// ---------------------------------------------------------------- connecting
+const validUrl = (u) => /^https:\/\/script\.google\.com\/(a\/[^/]+\/)?macros\/s\/[\w-]+\/exec$/.test(u);
+
+function takeHashConnection() {
+  // A setup link https://<site>/#connect=<base64 "URL|KEY"> also works, as in Lift Log.
+  const m = location.hash.match(/^#connect=(.+)$/);
+  if (!m) return;
+  try {
+    const [url, key] = atob(decodeURIComponent(m[1])).split('|');
+    if (validUrl(url) && key) keep(K.conn, { url, key });
+  } catch {}
+  history.replaceState(null, '', location.pathname);
+}
+
+async function pair(raw) {
+  const url = raw.trim().replace(/[?#].*$/, '');
+  if (!validUrl(url)) throw new Error('That isn’t the web app link. It starts with https://script.google.com/macros/s/ and ends with /exec.');
+  let res;
+  try { res = await (await fetch(url + '?action=pair')).json(); }
+  catch { throw new Error('Couldn’t reach your Google script. Check the link and that it is deployed with access for Anyone.'); }
+  if (!res.ok) throw new Error(res.error || 'Pairing failed.');
+  keep(K.conn, { url, key: res.key });
+}
+
+function renderConnect() {
+  $('#app').innerHTML = `
+    <div class="connect">
+      <h1>Connect to your Inbox</h1>
+      <p>Paste the web app link from your Google script. Notes you write here will land in Writing Studio’s Inbox on your Mac.</p>
+      <input id="url" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://script.google.com/macros/s/…/exec">
+      <div class="row"><button class="btn" id="paste">Paste</button><button class="btn primary" id="go">Connect</button></div>
+      <div class="err" id="err"></div>
+    </div>`;
+  const go = async () => {
+    $('#err').textContent = ''; $('#go').disabled = true; $('#go').textContent = 'Connecting…';
+    try { await pair($('#url').value); toast('Connected'); renderCompose(); sync(); }
+    catch (e) { $('#err').textContent = e.message; }
+    finally { const b = $('#go'); if (b) { b.disabled = false; b.textContent = 'Connect'; } }
+  };
+  $('#go').onclick = go;
+  $('#url').onkeydown = (e) => { if (e.key === 'Enter') go(); };
+  $('#paste').onclick = async () => {
+    try { $('#url').value = (await navigator.clipboard.readText()).trim(); go(); }
+    catch { $('#url').focus(); toast('Tap the box, then Paste'); }
+  };
+}
+
+// ---------------------------------------------------------------- writing
+function renderCompose() {
+  $('#app').innerHTML = `
+    <header>
+      <button class="status" id="status"><span class="dot" id="dot"></span><span id="stext"></span></button>
+      <button class="send" id="send" disabled>Send</button>
+    </header>
+    <main><textarea id="text" placeholder="An idea, a line, a scene…" autocapitalize="sentences" autocorrect="on" spellcheck="true"></textarea></main>
+    <footer><span id="count"></span><span>Writing Studio</span></footer>
+    <div class="sheet-bg" id="bg"></div>
+    <div class="sheet" id="sheet"></div>`;
+  const ta = $('#text');
+  ta.value = load(K.draft, '');
+  const changed = () => {
+    keep(K.draft, ta.value);
+    const n = words(ta.value);
+    $('#count').textContent = n ? `${n} word${n === 1 ? '' : 's'}` : '';
+    $('#send').disabled = !ta.value.trim();
+  };
+  ta.oninput = changed;
+  changed();
+  $('#send').onclick = send;
+  $('#status').onclick = openSheet;
+  $('#bg').onclick = closeSheet;
+  renderStatus();
+  if (!ta.value) setTimeout(() => ta.focus(), 50);
+}
+
+function send() {
+  const ta = $('#text');
+  const text = ta.value.trim();
+  if (!text) return;
+  const d = new Date();
+  queue.push({ id: newId(), text, stamp: stampOf(d), at: d.toISOString() });
+  keep(K.queue, queue);
+  ta.value = ''; keep(K.draft, ''); ta.dispatchEvent(new Event('input'));
+  ta.focus();
+  renderStatus();
+  sync(true);
+}
+
+function renderStatus() {
+  const dot = $('#dot'), txt = $('#stext');
+  if (!dot) return;
+  const n = queue.length;
+  dot.className = 'dot' + (n ? ' wait' : '');
+  txt.textContent = syncing ? 'Sending…' : n ? `${n} waiting to send` : recent.length ? 'All saved to Inbox' : 'Inbox';
+  if ($('#sheet')?.classList.contains('on')) fillSheet();
+}
+
+function fillSheet() {
+  const when = (iso) => new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const item = (n, wait) => `<div class="note"><div class="t">${esc(n.text)}</div><div class="m ${wait ? 'wait' : ''}">${wait ? 'Waiting to send' + (lastError ? ' · ' + esc(lastError) : '') : 'In Inbox · ' + when(n.at)}</div></div>`;
+  const items = [...queue].reverse().map((n) => item(n, true)).concat(recent.map((n) => item(n, false))).join('');
+  $('#sheet').innerHTML = `<h2>Recent notes</h2>${items || '<div class="empty">Notes you send appear here.</div>'}
+    ${queue.length ? '<button class="btn primary" id="retry" style="width:100%;margin-top:12px">Send now</button>' : ''}
+    <button class="link" id="forget">Disconnect this phone</button>`;
+  const r = $('#retry'); if (r) r.onclick = () => sync(true);
+  $('#forget').onclick = () => {
+    if (queue.length && !confirm(`${queue.length} note(s) haven’t been sent yet. They stay on this phone and send after you reconnect. Disconnect?`)) return;
+    keep(K.conn, null); closeSheet(); renderConnect();
+  };
+}
+function openSheet() { fillSheet(); $('#sheet').classList.add('on'); $('#bg').classList.add('on'); document.activeElement?.blur(); }
+function closeSheet() { $('#sheet')?.classList.remove('on'); $('#bg')?.classList.remove('on'); }
+
+// ---------------------------------------------------------------- upload
+async function call(conn, body) {
+  const res = await fetch(conn.url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ key: conn.key, ...body }) });
+  return res.json();
+}
+
+async function sync(fromUser) {
+  const conn = load(K.conn, null);
+  if (syncing || !conn || !queue.length) return;
+  syncing = true; renderStatus();
+  let sent = 0;
+  try {
+    while (queue.length) {
+      const note = queue[0];
+      const res = await call(conn, { action: 'save', note: { id: note.id, text: note.text, stamp: note.stamp } });
+      if (!res.ok) {
+        lastError = res.error || 'Not saved';
+        if (res.reconnect) { toast('This phone needs to reconnect. Your notes are safe here.', 5000); keep(K.conn, null); renderConnect(); }
+        else if (fromUser) toast(lastError, 5000);
+        break;
+      }
+      queue.shift(); keep(K.queue, queue);
+      recent.unshift({ text: note.text, at: note.at, name: res.name });
+      recent = recent.slice(0, 20); keep(K.recent, recent);
+      sent++; lastError = '';
+    }
+  } catch {
+    lastError = navigator.onLine ? 'Couldn’t reach Google' : 'No connection';
+    if (fromUser) toast('Saved on this phone. It will go to your Inbox when you have signal.', 4000);
+  } finally {
+    syncing = false; renderStatus();
+  }
+  if (sent && fromUser) toast(sent === 1 ? 'Sent to your Inbox' : `${sent} notes sent to your Inbox`);
+}
+
+// ---------------------------------------------------------------- start
+takeHashConnection();
+load(K.conn, null) ? renderCompose() : renderConnect();
+sync();
+addEventListener('online', () => sync());
+document.addEventListener('visibilitychange', () => { if (!document.hidden) sync(); });
+setInterval(() => sync(), 30000);
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+</script>
+</body>
+</html>
