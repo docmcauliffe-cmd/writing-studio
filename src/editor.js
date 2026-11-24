@@ -140,6 +140,17 @@ const inCode = (state, pos) => {
   return false;
 };
 
+const start0 = (line) => line.from;
+
+/** Where the list item holding `pos` starts, if `pos` is on a later line of that item. */
+function listItemStart(state, pos) {
+  for (let n = syntaxTree(state).resolveInner(pos, 1); n; n = n.parent) {
+    if (n.name === 'FencedCode' || n.name === 'CodeBlock') return null;
+    if (n.name === 'ListItem') return state.doc.lineAt(n.from).number < state.doc.lineAt(pos).number ? n.from : null;
+  }
+  return null;
+}
+
 function buildLive(view) {
   const { state } = view;
   const decos = [];
@@ -153,7 +164,22 @@ function buildLive(view) {
       const line = state.doc.lineAt(pos);
       pos = line.to + 1;
       const p = linePrefix(line.text);
-      if (!p.kind || inCode(state, line.from)) continue;
+      if (!p.kind) {
+        // A line that continues a list item (text typed on the next line without the marker)
+        // hangs under the item's text instead of falling back to the margin.
+        const item = line.text.trim() && listItemStart(state, line.from);
+        if (item != null) {
+          const head = state.doc.lineAt(item), hp = linePrefix(head.text);
+          if (hp.kind === 'bullet' || hp.kind === 'task' || hp.kind === 'number') {
+            const w = hp.kind === 'number' ? Math.max(1.6, hp.marker.length * 0.62 + 0.5) : BULLET_W;
+            decos.push(Decoration.line({ class: 'cm-li-more', attributes: { style: `padding-left:${listDepth(head.text) * 1.5 + w}em` } }).range(start0(line)));
+            const lead = line.text.match(/^[ \t]*/)[0].length;
+            if (lead) add(hide, line.from, line.from + lead);
+          }
+        }
+        continue;
+      }
+      if (inCode(state, line.from)) continue;
       const start = line.from, end = line.from + p.end;
       if (p.kind === 'heading') {
         decos.push(Decoration.line({ class: `cm-h cm-h${Math.min(p.level, 3)}` }).range(start));
