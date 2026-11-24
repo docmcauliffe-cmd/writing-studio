@@ -38,6 +38,7 @@ const cmds = {
   device_name: () => 'iMac',
   local_backup_folder: () => '/Users/writer/Library/Application Support/Writing Studio/Backups',
   folder_exists: () => true,
+  claude_open: ({ url, copy }) => { (window.__claude ||= []).push({ url, copy }); console.log('claude_open', url); },
   watch_start: () => null,
   settings_read: () => files.get('Writing Studio - App Data/settings.json') || '{}',
   settings_write: ({ json }) => { files.set('Writing Studio - App Data/settings.json', json); },

@@ -55,6 +55,8 @@ pub const MENUS: &[(&str, &[Item])] = &[
         Custom("find", "Find…", Some("CmdOrCtrl+F")),
         Custom("find-book", "Find in Book…", Some("CmdOrCtrl+Shift+F")),
         Sep,
+        Custom("ask-claude", "Ask Claude…", Some("CmdOrCtrl+J")),
+        Sep,
         Custom("smart-typing", "Smart Quotes and Dashes", None),
     ]),
     ("Format", &[

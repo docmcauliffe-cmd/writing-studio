@@ -183,6 +183,49 @@ fn folder_exists(path: String) -> bool {
     Path::new(&path).is_dir()
 }
 
+/// Ask Claude: optionally put the request on the clipboard, then open Claude (the desktop
+/// app for claude:// links, the browser for https). Only Claude's own addresses are allowed.
+/// Errors if nothing could open the link, so the window can fall back to the browser.
+#[tauri::command]
+fn claude_open(url: String, copy: Option<String>) -> Res<()> {
+    if !(url.starts_with("claude://claude.ai/") || url.starts_with("https://claude.ai/")) {
+        return Err("Only Claude links can be opened here.".into());
+    }
+    if let Some(text) = copy {
+        copy_text(&text)?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let ok = std::process::Command::new("/usr/bin/open").arg(&url).output().map(|o| o.status.success()).unwrap_or(false);
+        if ok { Ok(()) } else { Err("Could not open Claude.".into()) }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = url;
+        Err("Opening Claude works on the Mac only.".into())
+    }
+}
+
+fn copy_text(text: &str) -> Res<()> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::io::Write;
+        let mut child = std::process::Command::new("/usr/bin/pbcopy")
+            .env("LANG", "en_US.UTF-8")
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("Could not copy: {e}"))?;
+        child.stdin.take().ok_or("Could not copy")?.write_all(text.as_bytes()).map_err(|e| format!("Could not copy: {e}"))?;
+        child.wait().map_err(|e| format!("Could not copy: {e}"))?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = text;
+        Err("Copying works on the Mac only.".into())
+    }
+}
+
 /// Watch the library folder and tell the window which files changed
 /// (edits from the other Mac arriving through Google Drive, or Finder changes).
 #[tauri::command]
@@ -248,6 +291,7 @@ pub fn run() {
             snapshot_list,
             snapshot_restore,
             folder_exists,
+            claude_open,
             watch_start,
         ])
         .on_menu_event(|app, event| {
