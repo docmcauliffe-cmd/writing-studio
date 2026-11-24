@@ -26,7 +26,7 @@ import { relaunch } from '@tauri-apps/plugin-process';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { getVersion } from '@tauri-apps/api/app';
 import { createEditor, CLAUDE_ICON } from './editor.js';
-import { ACTIONS as CLAUDE_ACTIONS, buildPrompt, claudeTarget, projectId, projectLinkProblem, isStoryNote } from './claude.js';
+import { ACTIONS as CLAUDE_ACTIONS, buildPrompt, claudeTarget, parseProject, projectLinkProblem, isStoryNote } from './claude.js';
 import { lineDiff, wordCount, formatCount, stamp, snapshotDue, otherDeviceOn, dropIndex, minutesAgo } from './logic.js';
 
 const INBOX = 'Writing Studio - Inbox';
@@ -1591,9 +1591,10 @@ function claudeSettings() {
   const hint = h('small', { class: 'hint', id: 'claude-project-hint' });
   const showHint = (v) => {
     const problem = projectLinkProblem(v);
-    hint.className = 'hint' + (problem ? ' bad' : projectId(v) ? ' good' : '');
-    hint.textContent = problem || (projectId(v) ? '✓ Ask Claude can open this Project.'
-      : 'Optional. In claude.ai, open the Project from Projects in the sidebar and copy its address (claude.ai/project/…).');
+    const p = parseProject(v);
+    hint.className = 'hint' + (problem ? ' bad' : p ? ' good' : '');
+    hint.textContent = problem || (p ? '✓ Ask Claude will open this project with your text copied, ready to paste.'
+      : 'Optional. Open the book’s Project in claude.ai and copy the address from the top of the window.');
   };
   // Keep what was pasted, even if it won't work, so the reason stays visible; only a valid link is used.
   const project = h('input', { type: 'text', id: 'claude-project', value: cb.project || '', placeholder: 'claude.ai/project/…',
@@ -1629,7 +1630,7 @@ function askClaude() {
   const c = S.current;
   const b = c.inbox ? null : book();
   const cb = b ? claudeBook(b.name) : {};
-  const hasProject = !!projectId(cb.project);
+  const hasProject = !!parseProject(cb.project);
   let toProject = hasProject && store.get('ws-claude-to-project', false);
   const words = wordCount(text);
   const what = whole ? `This section, “${c.title}”` : 'The selected passage';
@@ -1718,7 +1719,7 @@ async function openClaude(prompt, { project = null } = {}) {
   let t = claudeTarget(prompt, { via, project });
   try {
     await invoke('claude_open', { url: t.url, copy: t.copy ? prompt : null });
-    tell(t, via === 'web' ? 'Claude' : 'the Claude app');
+    tell(t, t.url.startsWith('https:') ? 'Claude' : 'the Claude app');
   } catch {
     if (via === 'web') { toast('Could not open Claude.'); return; }
     // No Claude app on this Mac: use claude.ai in the browser instead.

@@ -73,38 +73,45 @@ function sentence(s) {
 
 /**
  * Where to send the request.
- * Returns { url, copy } — `copy` is true when the text is too long for a link (or is going
- * to a Project, which can't be prefilled), so the app copies it for Nick to paste.
+ * Returns { url, copy } — `copy` is true when the text is too long for a link, or is going
+ * to a Project (neither kind can be prefilled), so the app copies it for Nick to paste.
  */
 export function claudeTarget(prompt, { via = 'app', project = null } = {}) {
   const base = via === 'web' ? 'https://claude.ai' : 'claude://claude.ai';
-  const id = projectId(project);
-  if (id) return { url: `${base}/project/${id}`, copy: true };
+  const p = parseProject(project);
+  // Claude Code projects have no desktop-app link, so they always open as a web address.
+  if (p?.kind === 'code') return { url: `https://claude.ai/code/project/${p.id}`, copy: true };
+  if (p) return { url: `${base}/project/${p.id}`, copy: true };
   const limit = via === 'web' ? WEB_LIMIT : APP_LIMIT;
   if (prompt.length > limit) return { url: `${base}/new`, copy: true };
   return { url: `${base}/new?q=${encodeURIComponent(prompt)}`, copy: false };
 }
 
-/** Accepts a Project link (https://claude.ai/project/<id>) or the bare id. */
-export function projectId(link) {
+/**
+ * Reads a pasted Project link, with or without https:// (or claude://), and ignoring any
+ * ?query or #fragment. Two kinds:
+ *   chat Project: claude.ai/project/<uuid>              → { kind: 'chat', id }
+ *   Claude Code project: claude.ai/code/project/chan_…  → { kind: 'code', id }
+ * A bare id works too. Anything else → null.
+ */
+export function parseProject(link) {
   if (!link) return null;
-  const m = String(link).trim().match(/(?:^|\/project\/)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
-  return m ? m[1].toLowerCase() : null;
+  const v = String(link).trim();
+  const code = v.match(/(?:^|\/project\/)(chan_[A-Za-z0-9]{8,})(?=[/?#]|$)/);
+  if (code) return { kind: 'code', id: code[1] };
+  const chat = v.match(/(?:^|\/project\/)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?=[/?#]|$)/i);
+  return chat ? { kind: 'chat', id: chat[1].toLowerCase() } : null;
 }
 
-/**
- * Why a pasted Project link won't work, in plain words, or null when it will (or is empty).
- * The common mix-up: a Claude Code project link (claude.ai/code/…, ids starting chan_)
- * instead of a chat Project from claude.ai › Projects.
- */
+/** The chat Project id in a link, or null. */
+export const projectId = (link) => { const p = parseProject(link); return p?.kind === 'chat' ? p.id : null; };
+
+/** Why a pasted Project link won't work, in plain words, or null when it will (or is empty). */
 export function projectLinkProblem(link) {
   const v = String(link || '').trim();
-  if (!v || projectId(v)) return null;
-  const example = 'It looks like claude.ai/project/ followed by a long code of letters, numbers and dashes.';
-  if (/\bchan_|claude\.ai\/code\b|^claude:\/\/code\b/i.test(v)) {
-    return 'That’s a link to a Claude Code project, which can’t hold a chat. Use a Project from Projects in claude.ai’s sidebar instead. ' + example;
-  }
-  return 'That isn’t a Claude Project link. In claude.ai, open the Project from Projects in the sidebar and copy the address. ' + example;
+  if (!v || parseProject(v)) return null;
+  return 'That isn’t a Claude Project link. Open the Project in claude.ai and copy the address from the top of the window. '
+    + 'It looks like claude.ai/project/… or claude.ai/code/project/chan_…';
 }
 
 /** Notes whose title mentions stories or prompts are the ones Find a story sends along. */

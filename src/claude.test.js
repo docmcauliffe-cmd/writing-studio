@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPrompt, claudeTarget, cleanText, projectId, projectLinkProblem, isStoryNote, APP_LIMIT, WEB_LIMIT, ACTIONS } from './claude.js';
+import { buildPrompt, claudeTarget, cleanText, projectId, parseProject, projectLinkProblem, isStoryNote, APP_LIMIT, WEB_LIMIT, ACTIONS } from './claude.js';
 
 const ctx = { text: 'The bench is empty.', bookTitle: 'The Bench', chapter: 'Why succession fails', section: 'The empty chair' };
 
@@ -71,13 +71,28 @@ test('story notes are picked by title', () => {
 
 test('project links: accepted forms and plain-word problems', () => {
   const id = '0193a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b';
-  for (const v of [`https://claude.ai/project/${id}`, `claude.ai/project/${id}`, `claude://claude.ai/project/${id}`, ` ${id} `, `https://claude.ai/project/${id}/`]) {
-    assert.equal(projectId(v), id, v);
+  for (const v of [`https://claude.ai/project/${id}`, `claude.ai/project/${id}`, `claude://claude.ai/project/${id}`, ` ${id} `, `https://claude.ai/project/${id}/`, `https://claude.ai/project/${id}?x=1#y`]) {
+    assert.deepEqual(parseProject(v), { kind: 'chat', id }, v);
     assert.equal(projectLinkProblem(v), null, v);
   }
   assert.equal(projectLinkProblem(''), null);
-  for (const v of ['claude://claude.ai/project/chan_01V5e27wmU1y19hiWaf5Ahxb', 'https://claude.ai/code/project/chan_01V5e27wmU1y19hiWaf5Ahxb', 'claude.ai/project/chan_01V5e27wmU1y19hiWaf5Ahxb']) {
-    assert.match(projectLinkProblem(v), /Claude Code project/, v);
-  }
   assert.match(projectLinkProblem('https://claude.ai/chat/abc'), /isn’t a Claude Project link/);
+  assert.match(projectLinkProblem('https://claude.ai/code/project/'), /isn’t a Claude Project link/);
+});
+
+test('Claude Code project links are accepted and open that project', () => {
+  const chan = 'chan_01V5e27wmU1y19hiWaf5Ahxb';
+  for (const v of [
+    `https://claude.ai/code/project/${chan}`,
+    `claude.ai/code/project/${chan}`,
+    `https://claude.ai/code/project/${chan}?open_in_browser=1#no_universal_links`,
+    `claude://claude.ai/project/${chan}`,
+    `claude.ai/project/${chan}`,
+    chan,
+  ]) {
+    assert.deepEqual(parseProject(v), { kind: 'code', id: chan }, v);
+    assert.equal(projectLinkProblem(v), null, v);
+    assert.equal(projectId(v), null, v);
+    assert.deepEqual(claudeTarget('Hi', { project: v }), { url: `https://claude.ai/code/project/${chan}`, copy: true }, v);
+  }
 });
